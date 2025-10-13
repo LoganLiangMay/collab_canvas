@@ -2,13 +2,17 @@
 node_modules/
 /.pnp
 .pnp.js
+jspm_packages/
 
 # Testing
 /coverage
+*.lcov
+.nyc_output
 
 # Production build
 /dist
 /build
+build/Release
 
 # Environment variables
 .env
@@ -16,6 +20,8 @@ node_modules/
 .env.development.local
 .env.test.local
 .env.production.local
+.env.*
+!.env.example
 
 # Firebase
 .firebase/
@@ -25,17 +31,25 @@ firestore-debug.log
 ui-debug.log
 
 # Logs
+logs
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
+.vscode-test
 .idea
-.DS_Store
 *.suo
 *.ntvs*
 *.njsproj
@@ -45,6 +59,8 @@ lerna-debug.log*
 # Vite
 *.local
 .vite/
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
 
 # TypeScript
 *.tsbuildinfo
@@ -55,12 +71,46 @@ lerna-debug.log*
 # Optional eslint cache
 .eslintcache
 
+# Optional stylelint cache
+.stylelintcache
+
 # macOS
 .DS_Store
 .AppleDouble
 .LSOverride
 
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+
 # Temporary files
 *.tmp
 *.temp
 
+# Yarn
+.yarn-integrity
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# Parcel
+.cache
+.parcel-cache
+
+# Next.js / Nuxt.js / Gatsby
+.next
+out
+.nuxt
+.cache/
+
+# Serverless
+.serverless/
+
+# DynamoDB Local
+.dynamodb/
