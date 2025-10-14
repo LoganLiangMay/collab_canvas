@@ -409,15 +409,11 @@ export default function Canvas() {
 
   // Handle shape addition from sidebar - Click = custom-size drag mode
   const handleAddShape = (type: 'rectangle' | 'circle' | 'text' | 'line') => {
-    // Prevent activating if placement mode is already active
-    if (isPlacementMode) {
-      console.log('[handleAddShape] Ignoring - placement mode already active');
-      return;
-    }
+    console.log(`[handleAddShape] Called with type: ${type}, isPlacementMode: ${isPlacementMode}, isDraggingCreate: ${isDraggingCreate}`);
     
     if (type === 'rectangle' || type === 'circle') {
       // Enter custom-size drag mode (user clicks and drags on canvas to define size)
-      console.log(`[handleAddShape] Activating custom-size drag mode for ${type}`);
+      console.log(`[handleAddShape] ✅ Activating CROSSHAIR mode for ${type} (drag to define custom size)`);
       setIsDraggingCreate(true);
       setPlacementType(type);
       if (stageRef.current) {
@@ -428,7 +424,7 @@ export default function Canvas() {
 
   // Start placement mode - Drag from tool = fixed-size preview follows cursor
   const handleStartDragCreate = (type: 'rectangle' | 'circle' | 'text' | 'line') => {
-    console.log(`[handleStartDragCreate] Activating placement mode for ${type}`);
+    console.log(`[handleStartDragCreate] ✅ Activating PLACEMENT mode for ${type} (fixed-size preview follows cursor)`);
     setIsPlacementMode(true);
     setPlacementType(type);
     // Disable stage dragging while in placement mode
@@ -544,10 +540,13 @@ export default function Canvas() {
     const canvasX = (pointer.x - stagePos.x) / stageScale;
     const canvasY = (pointer.y - stagePos.y) / stageScale;
 
+    console.log(`[handleCanvasMouseDown] isDraggingCreate: ${isDraggingCreate}, isPlacementMode: ${isPlacementMode}, placementType: ${placementType}`);
+
     // If in drag-create mode (custom-size), start dragging
     if (isDraggingCreate && !isMouseDown.current) {
       isMouseDown.current = true;
       dragStartPos.current = { x: canvasX, y: canvasY };
+      console.log(`[handleCanvasMouseDown] 🎯 Started drag from (${canvasX.toFixed(2)}, ${canvasY.toFixed(2)}) for ${placementType}`);
     }
   };
 

@@ -17,6 +17,7 @@ export default function LeftSidebar({ onAddShape, onStartDragCreate, onDeleteSel
   
   const handleRectangleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
+    console.log('[LeftSidebar] 🟦 Rectangle button MOUSE DOWN');
     isDraggingFromToolRef.current = true;
     hasMovedRef.current = false;
     
@@ -25,6 +26,7 @@ export default function LeftSidebar({ onAddShape, onStartDragCreate, onDeleteSel
       // If mouse moves, switch to fixed-size placement mode
       if (!hasMovedRef.current) {
         hasMovedRef.current = true;
+        console.log('[LeftSidebar] 🟦 Rectangle - Mouse MOVED → calling onStartDragCreate (placement mode)');
         if (onStartDragCreate) {
           onStartDragCreate('rectangle');
         }
@@ -34,7 +36,9 @@ export default function LeftSidebar({ onAddShape, onStartDragCreate, onDeleteSel
     
     const handleMouseUp = () => {
       // If released without moving, enter custom-size drag mode
+      console.log(`[LeftSidebar] 🟦 Rectangle - Mouse UP, hasMoved: ${hasMovedRef.current}`);
       if (isDraggingFromToolRef.current && !hasMovedRef.current && onAddShape) {
+        console.log('[LeftSidebar] 🟦 Rectangle - Quick click detected → calling onAddShape (crosshair mode)');
         onAddShape('rectangle');
       }
       cleanup();
@@ -53,6 +57,7 @@ export default function LeftSidebar({ onAddShape, onStartDragCreate, onDeleteSel
 
   const handleCircleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
+    console.log('[LeftSidebar] 🔵 Circle button MOUSE DOWN');
     isDraggingFromToolRef.current = true;
     hasMovedRef.current = false;
     
@@ -61,6 +66,7 @@ export default function LeftSidebar({ onAddShape, onStartDragCreate, onDeleteSel
       // If mouse moves, switch to fixed-size placement mode
       if (!hasMovedRef.current) {
         hasMovedRef.current = true;
+        console.log('[LeftSidebar] 🔵 Circle - Mouse MOVED → calling onStartDragCreate (placement mode)');
         if (onStartDragCreate) {
           onStartDragCreate('circle');
         }
@@ -70,7 +76,9 @@ export default function LeftSidebar({ onAddShape, onStartDragCreate, onDeleteSel
     
     const handleMouseUp = () => {
       // If released without moving, enter custom-size drag mode
+      console.log(`[LeftSidebar] 🔵 Circle - Mouse UP, hasMoved: ${hasMovedRef.current}`);
       if (isDraggingFromToolRef.current && !hasMovedRef.current && onAddShape) {
+        console.log('[LeftSidebar] 🔵 Circle - Quick click detected → calling onAddShape (crosshair mode)');
         onAddShape('circle');
       }
       cleanup();
