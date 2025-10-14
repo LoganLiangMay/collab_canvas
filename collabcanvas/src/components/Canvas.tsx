@@ -458,15 +458,26 @@ export default function Canvas() {
       setPreviewShape({ x, y, width, height });
     }
     // Handle placement mode (fixed size preview)
-    else if (isPlacementMode && placementType === 'rectangle') {
-      const fixedWidth = 150;
-      const fixedHeight = 100;
-      setPreviewShape({
-        x: canvasX - fixedWidth / 2,
-        y: canvasY - fixedHeight / 2,
-        width: fixedWidth,
-        height: fixedHeight
-      });
+    else if (isPlacementMode && placementType) {
+      if (placementType === 'rectangle') {
+        const fixedWidth = 150;
+        const fixedHeight = 100;
+        setPreviewShape({
+          x: canvasX - fixedWidth / 2,
+          y: canvasY - fixedHeight / 2,
+          width: fixedWidth,
+          height: fixedHeight
+        });
+      } else if (placementType === 'circle') {
+        const fixedSize = 100; // Diameter
+        // For circles, x,y is the center, so we position it directly at cursor
+        setPreviewShape({
+          x: canvasX,
+          y: canvasY,
+          width: fixedSize,
+          height: fixedSize
+        });
+      }
     } else {
       updateCursor(canvasX, canvasY);
     }
@@ -564,27 +575,37 @@ export default function Canvas() {
     if (isDraggingCreate && isMouseDown.current && previewShape && user && placementType) {
       const minSize = 10; // Minimum size for a shape
       
-      // For circles, use the average of width and height to maintain circular shape
+      // For circles, use the largest dimension to maintain circular shape
       const shapeWidth = placementType === 'circle' ? Math.max(previewShape.width, previewShape.height) : previewShape.width;
       const shapeHeight = placementType === 'circle' ? shapeWidth : previewShape.height;
+      
+      // Calculate final position (circles need center point, rectangles use top-left)
+      let finalX = previewShape.x;
+      let finalY = previewShape.y;
+      
+      if (placementType === 'circle') {
+        // Convert top-left corner to center point for circles
+        finalX = previewShape.x + shapeWidth / 2;
+        finalY = previewShape.y + shapeHeight / 2;
+      }
       
       // Only create if shape is large enough
       if (shapeWidth >= minSize && shapeHeight >= minSize) {
         try {
           await createShapeFirestore({
             type: placementType as 'rectangle' | 'circle',
-            x: previewShape.x,
-            y: previewShape.y,
+            x: finalX,
+            y: finalY,
             width: shapeWidth,
             height: shapeHeight,
             fill: '#3498db',
             userId: user.uid,
           });
-          console.log(`[DRAG CREATE] Created ${placementType} at (${previewShape.x.toFixed(2)}, ${previewShape.y.toFixed(2)}) with size ${shapeWidth.toFixed(2)}x${shapeHeight.toFixed(2)}`);
+          console.log(`[DRAG CREATE] Created ${placementType} at (${finalX.toFixed(2)}, ${finalY.toFixed(2)}) with size ${shapeWidth.toFixed(2)}x${shapeHeight.toFixed(2)}`);
         } catch (err: any) {
           console.error('[handleMouseUp] Error creating shape:', err);
           errorLogger.logError('Failed to create shape via drag', err, { 
-            position: { x: previewShape.x, y: previewShape.y },
+            position: { x: finalX, y: finalY },
             size: { width: shapeWidth, height: shapeHeight },
             type: placementType
           });
