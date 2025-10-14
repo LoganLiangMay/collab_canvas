@@ -550,24 +550,6 @@ export default function Canvas() {
     }
   };
 
-  // Handle preview shape drag (for placement mode)
-  const handlePreviewDragEnd = useCallback((_id: string, x: number, y: number) => {
-    console.log(`[handlePreviewDragEnd] Preview dragged to (${x.toFixed(2)}, ${y.toFixed(2)}), isPlacementMode: ${isPlacementMode}`);
-    
-    if (!isPlacementMode) return;
-    
-    // Update preview position to match where it was dragged
-    setPreviewShape(prev => {
-      if (!prev) return null;
-      console.log(`[handlePreviewDragEnd] ✅ Updating preview position from (${prev.x.toFixed(2)}, ${prev.y.toFixed(2)}) to (${x.toFixed(2)}, ${y.toFixed(2)})`);
-      return {
-        ...prev,
-        x,
-        y
-      };
-    });
-  }, [isPlacementMode]);
-
   // Create shape from placement mode (fixed-size)
   const createPlacementShape = async () => {
     if (!previewShape || !user || !placementType) return;
@@ -783,7 +765,7 @@ export default function Canvas() {
       )}
       
       <div 
-        className={`canvas-container ${(isDraggingCreate || isPlacementMode) ? 'create-mode' : ''}`}
+        className={`canvas-container ${isDraggingCreate ? 'create-mode' : ''}`}
       >
         <Stage
           ref={stageRef}
@@ -834,7 +816,7 @@ export default function Canvas() {
             })}
             
             {/* Preview shape while dragging to create */}
-            {previewShape && placementType && (
+            {previewShape && placementType && (isPlacementMode || (isDraggingCreate && isMouseDown.current)) && (
               placementType === 'circle' ? (
                 <Circle
                   key="preview"
@@ -845,11 +827,11 @@ export default function Canvas() {
                   height={previewShape.height}
                   fill="#3498db"
                   isSelected={false}
-                  isLocked={false}
+                  isLocked={isPlacementMode}
                   lockedBy={undefined}
                   currentUserId={user?.uid}
                   onDragStart={() => {}}
-                  onDragEnd={handlePreviewDragEnd}
+                  onDragEnd={() => {}}
                   onClick={() => {}}
                   opacity={isPlacementMode ? 0.7 : 0.5}
                 />
@@ -863,11 +845,11 @@ export default function Canvas() {
                   height={previewShape.height}
                   fill="#3498db"
                   isSelected={false}
-                  isLocked={false}
+                  isLocked={isPlacementMode}
                   lockedBy={undefined}
                   currentUserId={user?.uid}
                   onDragStart={() => {}}
-                  onDragEnd={handlePreviewDragEnd}
+                  onDragEnd={() => {}}
                   onClick={() => {}}
                   opacity={isPlacementMode ? 0.7 : 0.5}
                 />
