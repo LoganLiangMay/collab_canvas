@@ -550,6 +550,24 @@ export default function Canvas() {
     }
   };
 
+  // Handle preview shape drag (for placement mode)
+  const handlePreviewDragEnd = useCallback((_id: string, x: number, y: number) => {
+    console.log(`[handlePreviewDragEnd] Preview dragged to (${x.toFixed(2)}, ${y.toFixed(2)}), isPlacementMode: ${isPlacementMode}`);
+    
+    if (!isPlacementMode) return;
+    
+    // Update preview position to match where it was dragged
+    setPreviewShape(prev => {
+      if (!prev) return null;
+      console.log(`[handlePreviewDragEnd] ✅ Updating preview position from (${prev.x.toFixed(2)}, ${prev.y.toFixed(2)}) to (${x.toFixed(2)}, ${y.toFixed(2)})`);
+      return {
+        ...prev,
+        x,
+        y
+      };
+    });
+  }, [isPlacementMode]);
+
   // Create shape from placement mode (fixed-size)
   const createPlacementShape = async () => {
     if (!previewShape || !user || !placementType) return;
@@ -557,6 +575,8 @@ export default function Canvas() {
     // For circles, ensure width and height are equal (use width as diameter)
     const shapeWidth = previewShape.width;
     const shapeHeight = placementType === 'circle' ? previewShape.width : previewShape.height;
+    
+    console.log(`[createPlacementShape] Creating ${placementType} at preview position (${previewShape.x.toFixed(2)}, ${previewShape.y.toFixed(2)})`);
     
     try {
       await createShapeFirestore({
@@ -568,7 +588,7 @@ export default function Canvas() {
         fill: '#3498db',
         userId: user.uid,
       });
-      console.log(`[PLACEMENT] Created ${placementType} at (${previewShape.x.toFixed(2)}, ${previewShape.y.toFixed(2)})`);
+      console.log(`[PLACEMENT] ✅ Created ${placementType} at (${previewShape.x.toFixed(2)}, ${previewShape.y.toFixed(2)})`);
     } catch (err: any) {
       console.error('[createPlacementShape] Error:', err);
       errorLogger.logError('Failed to create shape via placement', err, { 
@@ -829,7 +849,7 @@ export default function Canvas() {
                   lockedBy={undefined}
                   currentUserId={user?.uid}
                   onDragStart={() => {}}
-                  onDragEnd={() => {}}
+                  onDragEnd={handlePreviewDragEnd}
                   onClick={() => {}}
                   opacity={isPlacementMode ? 0.7 : 0.5}
                 />
@@ -847,7 +867,7 @@ export default function Canvas() {
                   lockedBy={undefined}
                   currentUserId={user?.uid}
                   onDragStart={() => {}}
-                  onDragEnd={() => {}}
+                  onDragEnd={handlePreviewDragEnd}
                   onClick={() => {}}
                   opacity={isPlacementMode ? 0.7 : 0.5}
                 />
