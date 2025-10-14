@@ -449,13 +449,29 @@ export default function Canvas() {
     if (isDraggingCreate && isMouseDown.current && dragStartPos.current) {
       const startX = dragStartPos.current.x;
       const startY = dragStartPos.current.y;
-      const width = Math.abs(canvasX - startX);
-      const height = Math.abs(canvasY - startY);
-      const x = Math.min(startX, canvasX);
-      const y = Math.min(startY, canvasY);
       
-      // Update preview shape
-      setPreviewShape({ x, y, width, height });
+      if (placementType === 'circle') {
+        // For circles: expand from center point (where user clicked)
+        const radiusX = Math.abs(canvasX - startX);
+        const radiusY = Math.abs(canvasY - startY);
+        const diameter = Math.max(radiusX, radiusY) * 2; // Use largest dimension
+        
+        // Circle center is the start point, x/y for storage is center
+        setPreviewShape({ 
+          x: startX, 
+          y: startY, 
+          width: diameter, 
+          height: diameter 
+        });
+      } else {
+        // For rectangles: expand from corner
+        const width = Math.abs(canvasX - startX);
+        const height = Math.abs(canvasY - startY);
+        const x = Math.min(startX, canvasX);
+        const y = Math.min(startY, canvasY);
+        
+        setPreviewShape({ x, y, width, height });
+      }
     }
     // Handle placement mode (fixed size preview)
     else if (isPlacementMode && placementType) {
@@ -573,21 +589,17 @@ export default function Canvas() {
     
     // Mode 1: Drag-create mode (custom-size) - create if dragged enough
     if (isDraggingCreate && isMouseDown.current && previewShape && user && placementType) {
-      const minSize = 10; // Minimum size for a shape
+      const minSize = 10; // Minimum size for a shape (diameter for circles)
       
-      // For circles, use the largest dimension to maintain circular shape
+      // For circles, ensure width=height (diameter). For rectangles, use actual dimensions.
       const shapeWidth = placementType === 'circle' ? Math.max(previewShape.width, previewShape.height) : previewShape.width;
       const shapeHeight = placementType === 'circle' ? shapeWidth : previewShape.height;
       
-      // Calculate final position (circles need center point, rectangles use top-left)
-      let finalX = previewShape.x;
-      let finalY = previewShape.y;
-      
-      if (placementType === 'circle') {
-        // Convert top-left corner to center point for circles
-        finalX = previewShape.x + shapeWidth / 2;
-        finalY = previewShape.y + shapeHeight / 2;
-      }
+      // Position is already correct from preview:
+      // - Circles: x, y is already the center point
+      // - Rectangles: x, y is already the top-left corner
+      const finalX = previewShape.x;
+      const finalY = previewShape.y;
       
       // Only create if shape is large enough
       if (shapeWidth >= minSize && shapeHeight >= minSize) {
