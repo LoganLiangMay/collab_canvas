@@ -409,8 +409,15 @@ export default function Canvas() {
 
   // Handle shape addition from sidebar - Click = custom-size drag mode
   const handleAddShape = (type: 'rectangle' | 'circle' | 'text' | 'line') => {
+    // Prevent activating if placement mode is already active
+    if (isPlacementMode) {
+      console.log('[handleAddShape] Ignoring - placement mode already active');
+      return;
+    }
+    
     if (type === 'rectangle' || type === 'circle') {
       // Enter custom-size drag mode (user clicks and drags on canvas to define size)
+      console.log(`[handleAddShape] Activating custom-size drag mode for ${type}`);
       setIsDraggingCreate(true);
       setPlacementType(type);
       if (stageRef.current) {
@@ -421,6 +428,7 @@ export default function Canvas() {
 
   // Start placement mode - Drag from tool = fixed-size preview follows cursor
   const handleStartDragCreate = (type: 'rectangle' | 'circle' | 'text' | 'line') => {
+    console.log(`[handleStartDragCreate] Activating placement mode for ${type}`);
     setIsPlacementMode(true);
     setPlacementType(type);
     // Disable stage dragging while in placement mode
@@ -451,10 +459,11 @@ export default function Canvas() {
       const startY = dragStartPos.current.y;
       
       if (placementType === 'circle') {
-        // For circles: expand from center point (where user clicked)
-        const radiusX = Math.abs(canvasX - startX);
-        const radiusY = Math.abs(canvasY - startY);
-        const diameter = Math.max(radiusX, radiusY) * 2; // Use largest dimension
+        // For circles: expand radially from center using actual distance
+        const deltaX = canvasX - startX;
+        const deltaY = canvasY - startY;
+        const radius = Math.sqrt(deltaX * deltaX + deltaY * deltaY); // Euclidean distance
+        const diameter = radius * 2;
         
         // Circle center is the start point, x/y for storage is center
         setPreviewShape({ 
