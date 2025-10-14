@@ -51,6 +51,42 @@ export default function LeftSidebar({ onAddShape, onStartDragCreate, onDeleteSel
     document.addEventListener('mouseup', handleMouseUp, { once: true });
   };
 
+  const handleCircleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingFromToolRef.current = true;
+    hasMovedRef.current = false;
+    
+    // Set up global mouse move and mouse up listeners
+    const handleMouseMove = (_e: MouseEvent) => {
+      // If mouse moves, switch to fixed-size placement mode
+      if (!hasMovedRef.current) {
+        hasMovedRef.current = true;
+        if (onStartDragCreate) {
+          onStartDragCreate('circle');
+        }
+        cleanup();
+      }
+    };
+    
+    const handleMouseUp = () => {
+      // If released without moving, enter custom-size drag mode
+      if (isDraggingFromToolRef.current && !hasMovedRef.current && onAddShape) {
+        onAddShape('circle');
+      }
+      cleanup();
+    };
+    
+    const cleanup = () => {
+      isDraggingFromToolRef.current = false;
+      hasMovedRef.current = false;
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+    
+    document.addEventListener('mousemove', handleMouseMove, { once: false });
+    document.addEventListener('mouseup', handleMouseUp, { once: true });
+  };
+
   const handleDeleteClick = () => {
     if (selectedShape) {
       onDeleteSelected();
@@ -71,16 +107,15 @@ export default function LeftSidebar({ onAddShape, onStartDragCreate, onDeleteSel
         <span className={styles.tooltip}>Click or Drag to create</span>
       </button>
 
-      {/* Circle Tool - Disabled */}
+      {/* Circle Tool - Active */}
       <button
-        className={`${styles.toolButton} ${styles.disabled}`}
-        disabled
-        aria-label="Circle Tool"
-        aria-disabled="true"
-        title="Coming Soon"
+        className={`${styles.toolButton} ${styles.active}`}
+        onMouseDown={handleCircleMouseDown}
+        aria-label="Click: drag to size | Hold & drag: fixed size"
+        title="Click: drag to size | Hold & drag: fixed size"
       >
         <Circle size={20} strokeWidth={2} />
-        <span className={styles.tooltip}>Coming Soon</span>
+        <span className={styles.tooltip}>Click or Drag to create</span>
       </button>
 
       {/* Text Tool - Disabled */}

@@ -7,11 +7,15 @@ import { useCursorSync } from '../hooks/useCursorSync';
 import { usePresence } from '../hooks/usePresence';
 import { getUserCursorColor } from '../utils/colorUtils';
 import Rectangle from './Rectangle';
+import Circle from './Circle';
 import Cursor from './Cursor';
 import LeftSidebar from './LeftSidebar';
 import UserMenu from './UI/UserMenu';
 import Toast from './UI/Toast';
+import AICommandInput from './AI/AICommandInput';
 import { errorLogger } from '../utils/errorLogger';
+import { executeAICommand, AI_ENABLED } from '../services/aiService';
+import { getRandomColor } from '../utils/colorUtils';
 
 export default function Canvas() {
   const { user } = useAuth();
@@ -35,6 +39,9 @@ export default function Canvas() {
   const showToast = useCallback((message: string, type: 'info' | 'error' | 'success' | 'warning' = 'info') => {
     setToast({ message, type });
   }, []);
+
+  // AI command processing state
+  const [isProcessingAI, setIsProcessingAI] = useState(false);
 
   // Cursor sync for multiplayer
   const userColor = user ? getUserCursorColor(user.uid) : '#000000';
@@ -313,6 +320,64 @@ export default function Canvas() {
       deleteInProgressRef.current = null;
     }
   }, [selectedId, shapes, deleteShapeFirestore, showToast]);
+
+  // Handle AI command execution
+  const handleAICommand = useCallback(async (command: string) => {
+    if (!user) {
+      showToast('You must be logged in to use AI features', 'error');
+      return;
+    }
+
+    setIsProcessingAI(true);
+    
+    try {
+      console.log('[AI] Processing command:', command);
+      const aiCommand = await executeAICommand(command, shapes);
+      console.log('[AI] Parsed command:', aiCommand);
+
+      // Execute the command
+      switch (aiCommand.action) {
+        case 'create':
+          if (aiCommand.shapeType && user) {
+            // Get canvas center for shape placement
+            const centerX = (dimensions.width / 2 - stagePos.x) / stageScale;
+            const centerY = (dimensions.height / 2 - stagePos.y) / stageScale;
+
+            const size = aiCommand.shapeType === 'circle' ? 100 : 150;
+            const shapeData = {
+              type: aiCommand.shapeType,
+              x: aiCommand.shapeType === 'circle' ? centerX : centerX - size / 2,
+              y: aiCommand.shapeType === 'circle' ? centerY : centerY - size / 2,
+              width: size,
+              height: aiCommand.shapeType === 'circle' ? size : 100,
+              fill: aiCommand.properties?.fill || getRandomColor(),
+              userId: user.uid,
+            };
+
+            await createShapeFirestore(shapeData);
+            showToast(`Created ${aiCommand.shapeType}!`, 'success');
+          }
+          break;
+
+        case 'delete':
+          if (selectedId) {
+            await handleDeleteSelected();
+            showToast('Shape deleted!', 'success');
+          } else {
+            showToast('No shape selected to delete', 'warning');
+          }
+          break;
+
+        default:
+          showToast(`Command "${aiCommand.action}" not yet implemented`, 'info');
+      }
+    } catch (err) {
+      console.error('[AI] Error executing command:', err);
+      showToast(err instanceof Error ? err.message : 'Failed to execute command', 'error');
+    } finally {
+      setIsProcessingAI(false);
+    }
+  }, [user, shapes, dimensions, stagePos, stageScale, selectedId, createShapeFirestore, handleDeleteSelected, showToast]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -672,45 +737,71 @@ export default function Canvas() {
             {/* Grid lines for visual feedback */}
             {renderGrid()}
             
-            {/* Render rectangles */}
-            {shapes.map((shape) => (
-              <Rectangle
-                key={shape.id}
-                id={shape.id}
-                x={shape.x}
-                y={shape.y}
-                width={shape.width}
-                height={shape.height}
-                fill={shape.fill}
-                isSelected={shape.id === selectedId}
-                isLocked={shape.isLocked}
-                lockedBy={shape.lockedBy}
-                currentUserId={user?.uid}
-                onDragStart={handleShapeDragStart}
-                onDragEnd={handleShapeDragEnd}
-                onClick={selectShape}
-              />
-            ))}
+            {/* Render all shapes (rectangles and circles) */}
+            {shapes.map((shape) => {
+              const shapeProps = {
+                key: shape.id,
+                id: shape.id,
+                x: shape.x,
+                y: shape.y,
+                width: shape.width,
+                height: shape.height,
+                fill: shape.fill,
+                isSelected: shape.id === selectedId,
+                isLocked: shape.isLocked,
+                lockedBy: shape.lockedBy,
+                currentUserId: user?.uid,
+                onDragStart: handleShapeDragStart,
+                onDragEnd: handleShapeDragEnd,
+                onClick: selectShape,
+              };
+
+              return shape.type === 'circle' ? (
+                <Circle {...shapeProps} />
+              ) : (
+                <Rectangle {...shapeProps} />
+              );
+            })}
             
             {/* Preview shape while dragging to create */}
-            {previewShape && (
-              <Rectangle
-                key="preview"
-                id="preview"
-                x={previewShape.x}
-                y={previewShape.y}
-                width={previewShape.width}
-                height={previewShape.height}
-                fill="#3498db"
-                isSelected={false}
-                isLocked={false}
-                lockedBy={undefined}
-                currentUserId={user?.uid}
-                onDragStart={() => {}}
-                onDragEnd={() => {}}
-                onClick={() => {}}
-                opacity={isPlacementMode ? 0.7 : 0.5}
-              />
+            {previewShape && placementType && (
+              placementType === 'circle' ? (
+                <Circle
+                  key="preview"
+                  id="preview"
+                  x={previewShape.x}
+                  y={previewShape.y}
+                  width={previewShape.width}
+                  height={previewShape.height}
+                  fill="#3498db"
+                  isSelected={false}
+                  isLocked={false}
+                  lockedBy={undefined}
+                  currentUserId={user?.uid}
+                  onDragStart={() => {}}
+                  onDragEnd={() => {}}
+                  onClick={() => {}}
+                  opacity={isPlacementMode ? 0.7 : 0.5}
+                />
+              ) : (
+                <Rectangle
+                  key="preview"
+                  id="preview"
+                  x={previewShape.x}
+                  y={previewShape.y}
+                  width={previewShape.width}
+                  height={previewShape.height}
+                  fill="#3498db"
+                  isSelected={false}
+                  isLocked={false}
+                  lockedBy={undefined}
+                  currentUserId={user?.uid}
+                  onDragStart={() => {}}
+                  onDragEnd={() => {}}
+                  onClick={() => {}}
+                  opacity={isPlacementMode ? 0.7 : 0.5}
+                />
+              )
             )}
           </Layer>
 
@@ -722,6 +813,13 @@ export default function Canvas() {
           </Layer>
         </Stage>
       </div>
+
+      {/* AI Command Input */}
+      <AICommandInput
+        onExecuteCommand={handleAICommand}
+        isProcessing={isProcessingAI}
+        aiEnabled={AI_ENABLED}
+      />
     </div>
   );
 }

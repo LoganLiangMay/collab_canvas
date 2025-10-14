@@ -38,6 +38,15 @@ export function getUserCursorColor(userId: string): string {
 }
 
 /**
+ * Get a random color from the cursor color palette
+ * Used for AI-generated shapes and other random color needs
+ */
+export function getRandomColor(): string {
+  const index = Math.floor(Math.random() * CURSOR_COLORS.length);
+  return CURSOR_COLORS[index];
+}
+
+/**
  * Throttle function to limit how often a function can be called
  * Used for cursor position updates to maintain 60fps max
  */
