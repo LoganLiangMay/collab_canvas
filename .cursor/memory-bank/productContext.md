@@ -127,3 +127,4 @@ CollabCanvas solves this by:
 - **Modern stack**: React 19, TypeScript, Vite
 - **Easy deployment**: Firebase hosting, one command deploy
 
+
