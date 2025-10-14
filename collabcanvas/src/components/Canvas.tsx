@@ -461,8 +461,6 @@ export default function Canvas() {
         const radius = Math.sqrt(deltaX * deltaX + deltaY * deltaY); // Euclidean distance
         const diameter = radius * 2;
         
-        console.log(`[handleMouseMove] 🔵 Circle crosshair - center: (${startX.toFixed(2)}, ${startY.toFixed(2)}), radius: ${radius.toFixed(2)}, diameter: ${diameter.toFixed(2)}`);
-        
         // Circle center is the start point, x/y for storage is center
         setPreviewShape({ 
           x: startX, 
@@ -476,8 +474,6 @@ export default function Canvas() {
         const height = Math.abs(canvasY - startY);
         const x = Math.min(startX, canvasX);
         const y = Math.min(startY, canvasY);
-        
-        console.log(`[handleMouseMove] 🟦 Rectangle crosshair - position: (${x.toFixed(2)}, ${y.toFixed(2)}), size: ${width.toFixed(2)}x${height.toFixed(2)}`);
         
         setPreviewShape({ x, y, width, height });
       }
@@ -820,13 +816,7 @@ export default function Canvas() {
             })}
             
             {/* Preview shape while dragging to create */}
-            {(() => {
-              const shouldRender = previewShape && placementType && (isPlacementMode || (isDraggingCreate && isMouseDown.current));
-              if (previewShape && placementType) {
-                console.log(`[Preview Render] previewShape: ${!!previewShape}, placementType: ${placementType}, isPlacementMode: ${isPlacementMode}, isDraggingCreate: ${isDraggingCreate}, isMouseDown: ${isMouseDown.current}, shouldRender: ${shouldRender}`);
-              }
-              return shouldRender;
-            })() && (
+            {previewShape && placementType && (isPlacementMode || (isDraggingCreate && isMouseDown.current)) && (
               placementType === 'circle' ? (
                 <Circle
                   key="preview"
