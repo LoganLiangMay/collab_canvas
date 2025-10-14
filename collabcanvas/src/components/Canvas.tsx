@@ -7,11 +7,16 @@ import { useCursorSync } from '../hooks/useCursorSync';
 import { usePresence } from '../hooks/usePresence';
 import { getUserCursorColor } from '../utils/colorUtils';
 import Rectangle from './Rectangle';
+import Circle from './Circle';
+import TextBox from './TextBox';
 import Cursor from './Cursor';
 import LeftSidebar from './LeftSidebar';
 import UserMenu from './UI/UserMenu';
 import Toast from './UI/Toast';
+import AICommandInput from './AI/AICommandInput';
 import { errorLogger } from '../utils/errorLogger';
+import { executeAICommand, AI_ENABLED } from '../services/aiService';
+import { getRandomColor } from '../utils/colorUtils';
 
 export default function Canvas() {
   const { user } = useAuth();
@@ -35,6 +40,14 @@ export default function Canvas() {
   const showToast = useCallback((message: string, type: 'info' | 'error' | 'success' | 'warning' = 'info') => {
     setToast({ message, type });
   }, []);
+
+  // Text editing state
+  const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState<string>('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // AI command processing state
+  const [isProcessingAI, setIsProcessingAI] = useState(false);
 
   // Cursor sync for multiplayer
   const userColor = user ? getUserCursorColor(user.uid) : '#000000';
@@ -239,6 +252,119 @@ export default function Canvas() {
     setSelectedId(null);
   };
 
+  // Handle starting text edit
+  const handleStartTextEdit = useCallback((id: string) => {
+    // Use a small delay to ensure Firestore has synced the shape
+    setTimeout(() => {
+      const shape = shapes.find(s => s.id === id);
+      if (shape && shape.type === 'text') {
+        console.log(`[handleStartTextEdit] Starting edit for shape ${id}, text: "${shape.text}"`);
+        setEditingTextId(id);
+        setEditingText(shape.text || 'Text');
+      }
+    }, 50);
+  }, [shapes]);
+
+  // Handle saving text changes with auto-width adjustment
+  const handleSaveTextEdit = useCallback(async () => {
+    if (!editingTextId) return;
+    
+    const shape = shapes.find(s => s.id === editingTextId);
+    if (!shape) return;
+    
+    console.log(`[handleSaveTextEdit] Saving text for shape ${editingTextId}: "${editingText}"`);
+    
+    // Calculate new width based on text content
+    const fontSize = Math.max(12, shape.height * 0.8);
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    if (context) {
+      context.font = `${fontSize}px Arial, sans-serif`;
+      const metrics = context.measureText(editingText || 'Text');
+      const newWidth = Math.max(50, metrics.width + 20); // Add padding, minimum 50px
+      
+      try {
+        // Update both text and width
+        await updateShape(editingTextId, { 
+          text: editingText,
+          width: newWidth 
+        });
+        setEditingTextId(null);
+        setEditingText('');
+      } catch (err: any) {
+        console.error('[handleSaveTextEdit] Error updating text:', err);
+        errorLogger.logError('Failed to update text', err, { shapeId: editingTextId });
+        showToast('Failed to update text', 'error');
+      }
+    }
+  }, [editingTextId, editingText, shapes, updateShape, showToast]);
+
+  // Handle canceling text edit
+  const handleCancelTextEdit = useCallback(() => {
+    console.log('[handleCancelTextEdit] Canceling text edit');
+    setEditingTextId(null);
+    setEditingText('');
+  }, []);
+
+  // Track if we've already initialized the textarea to prevent re-initialization
+  const textareaInitialized = useRef<string | null>(null);
+
+  // Focus and position textarea when editing starts
+  useEffect(() => {
+    if (editingTextId && textareaRef.current && stageRef.current) {
+      const shape = shapes.find(s => s.id === editingTextId);
+      if (!shape) return;
+
+      const textarea = textareaRef.current;
+      
+      // Only initialize once per editing session
+      const isNewSession = textareaInitialized.current !== editingTextId;
+      
+      // Calculate screen position accounting for stage transform
+      const screenX = shape.x * stageScale + stagePos.x;
+      const screenY = shape.y * stageScale + stagePos.y;
+      const screenWidth = shape.width * stageScale;
+      const screenHeight = shape.height * stageScale;
+      
+      // Calculate font size proportional to height (same as TextBox component)
+      const fontSize = Math.max(12, shape.height * 0.8) * stageScale;
+
+      // Position textarea over the text box
+      textarea.style.position = 'absolute';
+      textarea.style.left = `${screenX}px`;
+      textarea.style.top = `${screenY}px`;
+      textarea.style.width = `${screenWidth}px`;
+      textarea.style.height = `${screenHeight}px`;
+      textarea.style.fontSize = `${fontSize}px`;
+      textarea.style.padding = '0';
+      textarea.style.margin = '0';
+      textarea.style.border = '2px solid #3498db';
+      textarea.style.borderRadius = '0';
+      textarea.style.backgroundColor = 'transparent';
+      textarea.style.color = '#ffffff';
+      textarea.style.outline = 'none';
+      textarea.style.resize = 'none';
+      textarea.style.overflow = 'hidden';
+      textarea.style.fontFamily = 'Arial, sans-serif';
+      textarea.style.zIndex = '1000';
+      textarea.style.lineHeight = 'normal';
+      textarea.style.display = 'flex';
+      textarea.style.alignItems = 'center';
+
+      // Only focus and select on initial setup, not on every update
+      if (isNewSession) {
+        textareaInitialized.current = editingTextId;
+        setTimeout(() => {
+          textarea.focus();
+          textarea.setSelectionRange(0, textarea.value.length);
+        }, 0);
+      }
+    } else {
+      // Reset when editing ends
+      textareaInitialized.current = null;
+    }
+  }, [editingTextId, shapes, stagePos, stageScale]);
+
   // Handle click on stage background
   const handleStageClick = (e: Konva.KonvaEventObject<MouseEvent>) => {
     // Check if clicked on stage background (not on a shape)
@@ -314,9 +440,72 @@ export default function Canvas() {
     }
   }, [selectedId, shapes, deleteShapeFirestore, showToast]);
 
+  // Handle AI command execution
+  const handleAICommand = useCallback(async (command: string) => {
+    if (!user) {
+      showToast('You must be logged in to use AI features', 'error');
+      return;
+    }
+
+    setIsProcessingAI(true);
+    
+    try {
+      console.log('[AI] Processing command:', command);
+      const aiCommand = await executeAICommand(command, shapes);
+      console.log('[AI] Parsed command:', aiCommand);
+
+      // Execute the command
+      switch (aiCommand.action) {
+        case 'create':
+          if (aiCommand.shapeType && user) {
+            // Get canvas center for shape placement
+            const centerX = (dimensions.width / 2 - stagePos.x) / stageScale;
+            const centerY = (dimensions.height / 2 - stagePos.y) / stageScale;
+
+            const size = aiCommand.shapeType === 'circle' ? 100 : 150;
+            const shapeData = {
+              type: aiCommand.shapeType,
+              x: aiCommand.shapeType === 'circle' ? centerX : centerX - size / 2,
+              y: aiCommand.shapeType === 'circle' ? centerY : centerY - size / 2,
+              width: size,
+              height: aiCommand.shapeType === 'circle' ? size : 100,
+              fill: aiCommand.properties?.fill || getRandomColor(),
+              userId: user.uid,
+            };
+
+            await createShapeFirestore(shapeData);
+            showToast(`Created ${aiCommand.shapeType}!`, 'success');
+          }
+          break;
+
+        case 'delete':
+          if (selectedId) {
+            await handleDeleteSelected();
+            showToast('Shape deleted!', 'success');
+          } else {
+            showToast('No shape selected to delete', 'warning');
+          }
+          break;
+
+        default:
+          showToast(`Command "${aiCommand.action}" not yet implemented`, 'info');
+      }
+    } catch (err) {
+      console.error('[AI] Error executing command:', err);
+      showToast(err instanceof Error ? err.message : 'Failed to execute command', 'error');
+    } finally {
+      setIsProcessingAI(false);
+    }
+  }, [user, shapes, dimensions, stagePos, stageScale, selectedId, createShapeFirestore, handleDeleteSelected, showToast]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger shortcuts if currently editing text
+      if (editingTextId) {
+        return;
+      }
+
       // Delete/Backspace - delete selected shape
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
         e.preventDefault(); // Prevent browser back navigation on Backspace
@@ -340,12 +529,15 @@ export default function Canvas() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedId, handleDeleteSelected, isDraggingCreate, isPlacementMode]);
+  }, [selectedId, handleDeleteSelected, isDraggingCreate, isPlacementMode, editingTextId]);
 
   // Handle shape addition from sidebar - Click = custom-size drag mode
   const handleAddShape = (type: 'rectangle' | 'circle' | 'text' | 'line') => {
-    if (type === 'rectangle') {
+    console.log(`[handleAddShape] Called with type: ${type}, isPlacementMode: ${isPlacementMode}, isDraggingCreate: ${isDraggingCreate}`);
+    
+    if (type === 'rectangle' || type === 'circle' || type === 'text') {
       // Enter custom-size drag mode (user clicks and drags on canvas to define size)
+      console.log(`[handleAddShape] ✅ Activating CROSSHAIR mode for ${type} (drag to define custom size)`);
       setIsDraggingCreate(true);
       setPlacementType(type);
       if (stageRef.current) {
@@ -356,6 +548,7 @@ export default function Canvas() {
 
   // Start placement mode - Drag from tool = fixed-size preview follows cursor
   const handleStartDragCreate = (type: 'rectangle' | 'circle' | 'text' | 'line') => {
+    console.log(`[handleStartDragCreate] ✅ Activating PLACEMENT mode for ${type} (fixed-size preview follows cursor)`);
     setIsPlacementMode(true);
     setPlacementType(type);
     // Disable stage dragging while in placement mode
@@ -384,24 +577,61 @@ export default function Canvas() {
     if (isDraggingCreate && isMouseDown.current && dragStartPos.current) {
       const startX = dragStartPos.current.x;
       const startY = dragStartPos.current.y;
-      const width = Math.abs(canvasX - startX);
-      const height = Math.abs(canvasY - startY);
-      const x = Math.min(startX, canvasX);
-      const y = Math.min(startY, canvasY);
       
-      // Update preview shape
-      setPreviewShape({ x, y, width, height });
+      if (placementType === 'circle') {
+        // For circles: expand radially from center using actual distance
+        const deltaX = canvasX - startX;
+        const deltaY = canvasY - startY;
+        const radius = Math.sqrt(deltaX * deltaX + deltaY * deltaY); // Euclidean distance
+        const diameter = radius * 2;
+        
+        // Circle center is the start point, x/y for storage is center
+        setPreviewShape({ 
+          x: startX, 
+          y: startY, 
+          width: diameter, 
+          height: diameter 
+        });
+      } else {
+        // For rectangles and text boxes: expand from corner
+        const width = Math.abs(canvasX - startX);
+        const height = Math.abs(canvasY - startY);
+        const x = Math.min(startX, canvasX);
+        const y = Math.min(startY, canvasY);
+        
+        setPreviewShape({ x, y, width, height });
+      }
     }
     // Handle placement mode (fixed size preview)
-    else if (isPlacementMode && placementType === 'rectangle') {
-      const fixedWidth = 150;
-      const fixedHeight = 100;
-      setPreviewShape({
-        x: canvasX - fixedWidth / 2,
-        y: canvasY - fixedHeight / 2,
-        width: fixedWidth,
-        height: fixedHeight
-      });
+    else if (isPlacementMode && placementType) {
+      if (placementType === 'rectangle') {
+        const fixedWidth = 150;
+        const fixedHeight = 100;
+        setPreviewShape({
+          x: canvasX - fixedWidth / 2,
+          y: canvasY - fixedHeight / 2,
+          width: fixedWidth,
+          height: fixedHeight
+        });
+      } else if (placementType === 'circle') {
+        const fixedSize = 100; // Diameter
+        // For circles, x,y is the center, so we position it directly at cursor
+        setPreviewShape({
+          x: canvasX,
+          y: canvasY,
+          width: fixedSize,
+          height: fixedSize
+        });
+      } else if (placementType === 'text') {
+        const fixedWidth = 200;
+        const fixedHeight = 50;
+        setPreviewShape({
+          x: canvasX - fixedWidth / 2,
+          y: canvasY - fixedHeight / 2,
+          width: fixedWidth,
+          height: fixedHeight
+        });
+      }
     } else {
       updateCursor(canvasX, canvasY);
     }
@@ -443,40 +673,60 @@ export default function Canvas() {
     const canvasX = (pointer.x - stagePos.x) / stageScale;
     const canvasY = (pointer.y - stagePos.y) / stageScale;
 
+    console.log(`[handleCanvasMouseDown] isDraggingCreate: ${isDraggingCreate}, isPlacementMode: ${isPlacementMode}, placementType: ${placementType}`);
+
     // If in drag-create mode (custom-size), start dragging
     if (isDraggingCreate && !isMouseDown.current) {
       isMouseDown.current = true;
       dragStartPos.current = { x: canvasX, y: canvasY };
+      console.log(`[handleCanvasMouseDown] 🎯 Started drag from (${canvasX.toFixed(2)}, ${canvasY.toFixed(2)}) for ${placementType}`);
     }
   };
 
   // Create shape from placement mode (fixed-size)
   const createPlacementShape = async () => {
-    if (!previewShape || !user) return;
+    if (!previewShape || !user || !placementType) return;
+    
+    // For circles, ensure width and height are equal (use width as diameter)
+    const shapeWidth = previewShape.width;
+    const shapeHeight = placementType === 'circle' ? previewShape.width : previewShape.height;
+    
+    console.log(`[createPlacementShape] Creating ${placementType} at preview position (${previewShape.x.toFixed(2)}, ${previewShape.y.toFixed(2)})`);
     
     try {
-      await createShapeFirestore({
-        type: 'rectangle',
+      const shapeData: any = {
+        type: placementType as 'rectangle' | 'circle' | 'text',
         x: previewShape.x,
         y: previewShape.y,
-        width: previewShape.width,
-        height: previewShape.height,
-        fill: '#3498db',
+        width: shapeWidth,
+        height: shapeHeight,
+        fill: placementType === 'text' ? 'transparent' : '#3498db',
         userId: user.uid,
-      });
-      console.log(`[PLACEMENT] Created shape at (${previewShape.x.toFixed(2)}, ${previewShape.y.toFixed(2)})`);
+      };
+
+      // Add default text for text boxes
+      if (placementType === 'text') {
+        shapeData.text = 'Text';
+      }
+
+      await createShapeFirestore(shapeData);
+      console.log(`[PLACEMENT] ✅ Created ${placementType} at (${previewShape.x.toFixed(2)}, ${previewShape.y.toFixed(2)})`);
     } catch (err: any) {
       console.error('[createPlacementShape] Error:', err);
       errorLogger.logError('Failed to create shape via placement', err, { 
-        position: { x: previewShape.x, y: previewShape.y }
+        position: { x: previewShape.x, y: previewShape.y },
+        type: placementType
       });
       showToast('Failed to create shape', 'error');
     }
     
-    // Reset placement mode
+    // Reset placement mode immediately
     setIsPlacementMode(false);
     setPlacementType(null);
+    
+    // Clear preview shape immediately to prevent duplicate rendering
     setPreviewShape(null);
+    
     if (stageRef.current) {
       stageRef.current.draggable(true);
     }
@@ -491,43 +741,67 @@ export default function Canvas() {
     }
     
     // Mode 1: Drag-create mode (custom-size) - create if dragged enough
-    if (isDraggingCreate && isMouseDown.current && previewShape && user) {
-      const minSize = 10; // Minimum size for a shape
+    if (isDraggingCreate && isMouseDown.current && previewShape && user && placementType) {
+      const minSize = 10; // Minimum size for a shape (diameter for circles)
+      
+      // For circles, ensure width=height (diameter). For rectangles and text, use actual dimensions.
+      const shapeWidth = placementType === 'circle' ? Math.max(previewShape.width, previewShape.height) : previewShape.width;
+      const shapeHeight = placementType === 'circle' ? shapeWidth : previewShape.height;
+      
+      // Position is already correct from preview:
+      // - Circles: x, y is already the center point
+      // - Rectangles/Text: x, y is already the top-left corner
+      const finalX = previewShape.x;
+      const finalY = previewShape.y;
       
       // Only create if shape is large enough
-      if (previewShape.width >= minSize && previewShape.height >= minSize) {
+      if (shapeWidth >= minSize && shapeHeight >= minSize) {
         try {
-          await createShapeFirestore({
-            type: 'rectangle',
-            x: previewShape.x,
-            y: previewShape.y,
-            width: previewShape.width,
-            height: previewShape.height,
-            fill: '#3498db',
+          const shapeData: any = {
+            type: placementType as 'rectangle' | 'circle' | 'text',
+            x: finalX,
+            y: finalY,
+            width: shapeWidth,
+            height: shapeHeight,
+            fill: placementType === 'text' ? 'transparent' : '#3498db',
             userId: user.uid,
-          });
-          console.log(`[DRAG CREATE] Created shape at (${previewShape.x.toFixed(2)}, ${previewShape.y.toFixed(2)}) with size ${previewShape.width.toFixed(2)}x${previewShape.height.toFixed(2)}`);
+          };
+
+          // Add default text for text boxes
+          if (placementType === 'text') {
+            shapeData.text = 'Text';
+          }
+
+          await createShapeFirestore(shapeData);
+          console.log(`[DRAG CREATE] Created ${placementType} at (${finalX.toFixed(2)}, ${finalY.toFixed(2)}) with size ${shapeWidth.toFixed(2)}x${shapeHeight.toFixed(2)}`);
         } catch (err: any) {
           console.error('[handleMouseUp] Error creating shape:', err);
           errorLogger.logError('Failed to create shape via drag', err, { 
-            position: { x: previewShape.x, y: previewShape.y },
-            size: { width: previewShape.width, height: previewShape.height }
+            position: { x: finalX, y: finalY },
+            size: { width: shapeWidth, height: shapeHeight },
+            type: placementType
           });
           showToast('Failed to create shape', 'error');
         }
       }
       
-      // Reset drag-create state
+      // Reset drag-create state immediately to prevent duplicate rendering
       setIsDraggingCreate(false);
       setPlacementType(null);
-      setPreviewShape(null);
       dragStartPos.current = null;
       isMouseDown.current = false;
+      
+      // Clear preview shape immediately
+      setPreviewShape(null);
       
       // Re-enable stage dragging
       if (stageRef.current) {
         stageRef.current.draggable(true);
       }
+    } else {
+      // Even if we didn't create a shape, clear the preview
+      setPreviewShape(null);
+      isMouseDown.current = false;
     }
   };
 
@@ -647,7 +921,7 @@ export default function Canvas() {
       )}
       
       <div 
-        className={`canvas-container ${(isDraggingCreate || isPlacementMode) ? 'create-mode' : ''}`}
+        className={`canvas-container ${isDraggingCreate ? 'create-mode' : ''}`}
       >
         <Stage
           ref={stageRef}
@@ -672,45 +946,99 @@ export default function Canvas() {
             {/* Grid lines for visual feedback */}
             {renderGrid()}
             
-            {/* Render rectangles */}
-            {shapes.map((shape) => (
-              <Rectangle
-                key={shape.id}
-                id={shape.id}
-                x={shape.x}
-                y={shape.y}
-                width={shape.width}
-                height={shape.height}
-                fill={shape.fill}
-                isSelected={shape.id === selectedId}
-                isLocked={shape.isLocked}
-                lockedBy={shape.lockedBy}
-                currentUserId={user?.uid}
-                onDragStart={handleShapeDragStart}
-                onDragEnd={handleShapeDragEnd}
-                onClick={selectShape}
-              />
-            ))}
+            {/* Render all shapes (rectangles, circles, and text boxes) */}
+            {shapes.map((shape) => {
+              const shapeProps = {
+                id: shape.id,
+                x: shape.x,
+                y: shape.y,
+                width: shape.width,
+                height: shape.height,
+                fill: shape.fill,
+                isSelected: shape.id === selectedId,
+                isLocked: shape.isLocked,
+                lockedBy: shape.lockedBy,
+                currentUserId: user?.uid,
+                onDragStart: handleShapeDragStart,
+                onDragEnd: handleShapeDragEnd,
+                onClick: selectShape,
+              };
+
+              if (shape.type === 'circle') {
+                return <Circle key={shape.id} {...shapeProps} />;
+              } else if (shape.type === 'text') {
+                return (
+                  <TextBox
+                    key={shape.id}
+                    {...shapeProps}
+                    text={shape.text || 'Text'}
+                    isEditing={editingTextId === shape.id}
+                    onStartEdit={handleStartTextEdit}
+                  />
+                );
+              } else {
+                return <Rectangle key={shape.id} {...shapeProps} />;
+              }
+            })}
             
             {/* Preview shape while dragging to create */}
-            {previewShape && (
-              <Rectangle
-                key="preview"
-                id="preview"
-                x={previewShape.x}
-                y={previewShape.y}
-                width={previewShape.width}
-                height={previewShape.height}
-                fill="#3498db"
-                isSelected={false}
-                isLocked={false}
-                lockedBy={undefined}
-                currentUserId={user?.uid}
-                onDragStart={() => {}}
-                onDragEnd={() => {}}
-                onClick={() => {}}
-                opacity={isPlacementMode ? 0.7 : 0.5}
-              />
+            {previewShape && placementType && (isPlacementMode || (isDraggingCreate && isMouseDown.current)) && (
+              placementType === 'circle' ? (
+                <Circle
+                  key="preview"
+                  id="preview"
+                  x={previewShape.x}
+                  y={previewShape.y}
+                  width={previewShape.width}
+                  height={previewShape.height}
+                  fill="#3498db"
+                  isSelected={false}
+                  isLocked={isPlacementMode}
+                  lockedBy={undefined}
+                  currentUserId={user?.uid}
+                  onDragStart={() => {}}
+                  onDragEnd={() => {}}
+                  onClick={() => {}}
+                  opacity={isPlacementMode ? 0.7 : 0.5}
+                />
+              ) : placementType === 'text' ? (
+                <TextBox
+                  key="preview"
+                  id="preview"
+                  x={previewShape.x}
+                  y={previewShape.y}
+                  width={previewShape.width}
+                  height={previewShape.height}
+                  fill="transparent"
+                  text="Text"
+                  isSelected={true}
+                  isLocked={false}
+                  lockedBy={undefined}
+                  currentUserId={user?.uid}
+                  onDragStart={() => {}}
+                  onDragEnd={() => {}}
+                  onClick={() => {}}
+                  opacity={isPlacementMode ? 0.7 : 0.5}
+                />
+              ) : (
+                <Rectangle
+                  key="preview"
+                  id="preview"
+                  x={previewShape.x}
+                  y={previewShape.y}
+                  width={previewShape.width}
+                  height={previewShape.height}
+                  fill="#3498db"
+                  isSelected={false}
+                  isLocked={isPlacementMode}
+                  lockedBy={undefined}
+                  currentUserId={user?.uid}
+                  onDragStart={() => {}}
+                  onDragEnd={() => {}}
+                  onClick={() => {}}
+                  opacity={isPlacementMode ? 0.7 : 0.5}
+                />
+              )
             )}
           </Layer>
 
@@ -722,6 +1050,47 @@ export default function Canvas() {
           </Layer>
         </Stage>
       </div>
+
+      {/* AI Command Input */}
+      <AICommandInput
+        onExecuteCommand={handleAICommand}
+        isProcessing={isProcessingAI}
+        aiEnabled={AI_ENABLED}
+      />
+
+      {/* Text Editing Overlay */}
+      {editingTextId && (
+        <textarea
+          ref={textareaRef}
+          value={editingText}
+          onChange={(e) => {
+            setEditingText(e.target.value);
+            // Auto-resize textarea width based on content
+            const shape = shapes.find(s => s.id === editingTextId);
+            if (shape && textareaRef.current) {
+              const fontSize = Math.max(12, shape.height * 0.8) * stageScale;
+              const canvas = document.createElement('canvas');
+              const context = canvas.getContext('2d');
+              if (context) {
+                context.font = `${fontSize}px Arial, sans-serif`;
+                const metrics = context.measureText(e.target.value || 'Text');
+                const newWidth = Math.max(50, (metrics.width + 20) * stageScale);
+                textareaRef.current.style.width = `${newWidth}px`;
+              }
+            }
+          }}
+          onBlur={handleSaveTextEdit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              handleSaveTextEdit();
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              handleCancelTextEdit();
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

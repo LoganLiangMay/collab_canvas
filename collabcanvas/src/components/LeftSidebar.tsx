@@ -14,27 +14,39 @@ interface LeftSidebarProps {
 export default function LeftSidebar({ onAddShape, onStartDragCreate, onDeleteSelected, selectedShape, onStressTest, fps }: LeftSidebarProps) {
   const isDraggingFromToolRef = React.useRef(false);
   const hasMovedRef = React.useRef(false);
+  const startPosRef = React.useRef<{ x: number; y: number } | null>(null);
   
   const handleRectangleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
+    console.log('[LeftSidebar] 🟦 Rectangle button MOUSE DOWN');
     isDraggingFromToolRef.current = true;
     hasMovedRef.current = false;
+    startPosRef.current = { x: e.clientX, y: e.clientY };
     
     // Set up global mouse move and mouse up listeners
-    const handleMouseMove = (_e: MouseEvent) => {
-      // If mouse moves, switch to fixed-size placement mode
-      if (!hasMovedRef.current) {
-        hasMovedRef.current = true;
-        if (onStartDragCreate) {
-          onStartDragCreate('rectangle');
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      // Only trigger placement mode if mouse moves more than 5 pixels (intentional drag)
+      if (!hasMovedRef.current && startPosRef.current) {
+        const deltaX = Math.abs(moveEvent.clientX - startPosRef.current.x);
+        const deltaY = Math.abs(moveEvent.clientY - startPosRef.current.y);
+        const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+        
+        if (distance > 5) {
+          hasMovedRef.current = true;
+          console.log(`[LeftSidebar] 🟦 Rectangle - Mouse MOVED ${distance.toFixed(1)}px → calling onStartDragCreate (placement mode)`);
+          if (onStartDragCreate) {
+            onStartDragCreate('rectangle');
+          }
+          cleanup();
         }
-        cleanup();
       }
     };
     
     const handleMouseUp = () => {
       // If released without moving, enter custom-size drag mode
+      console.log(`[LeftSidebar] 🟦 Rectangle - Mouse UP, hasMoved: ${hasMovedRef.current}`);
       if (isDraggingFromToolRef.current && !hasMovedRef.current && onAddShape) {
+        console.log('[LeftSidebar] 🟦 Rectangle - Quick click detected → calling onAddShape (crosshair mode)');
         onAddShape('rectangle');
       }
       cleanup();
@@ -43,6 +55,103 @@ export default function LeftSidebar({ onAddShape, onStartDragCreate, onDeleteSel
     const cleanup = () => {
       isDraggingFromToolRef.current = false;
       hasMovedRef.current = false;
+      startPosRef.current = null;
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+    
+    document.addEventListener('mousemove', handleMouseMove, { once: false });
+    document.addEventListener('mouseup', handleMouseUp, { once: true });
+  };
+
+  const handleCircleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    console.log('[LeftSidebar] 🔵 Circle button MOUSE DOWN');
+    isDraggingFromToolRef.current = true;
+    hasMovedRef.current = false;
+    startPosRef.current = { x: e.clientX, y: e.clientY };
+    
+    // Set up global mouse move and mouse up listeners
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      // Only trigger placement mode if mouse moves more than 5 pixels (intentional drag)
+      if (!hasMovedRef.current && startPosRef.current) {
+        const deltaX = Math.abs(moveEvent.clientX - startPosRef.current.x);
+        const deltaY = Math.abs(moveEvent.clientY - startPosRef.current.y);
+        const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+        
+        if (distance > 5) {
+          hasMovedRef.current = true;
+          console.log(`[LeftSidebar] 🔵 Circle - Mouse MOVED ${distance.toFixed(1)}px → calling onStartDragCreate (placement mode)`);
+          if (onStartDragCreate) {
+            onStartDragCreate('circle');
+          }
+          cleanup();
+        }
+      }
+    };
+    
+    const handleMouseUp = () => {
+      // If released without moving, enter custom-size drag mode
+      console.log(`[LeftSidebar] 🔵 Circle - Mouse UP, hasMoved: ${hasMovedRef.current}`);
+      if (isDraggingFromToolRef.current && !hasMovedRef.current && onAddShape) {
+        console.log('[LeftSidebar] 🔵 Circle - Quick click detected → calling onAddShape (crosshair mode)');
+        onAddShape('circle');
+      }
+      cleanup();
+    };
+    
+    const cleanup = () => {
+      isDraggingFromToolRef.current = false;
+      hasMovedRef.current = false;
+      startPosRef.current = null;
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+    
+    document.addEventListener('mousemove', handleMouseMove, { once: false });
+    document.addEventListener('mouseup', handleMouseUp, { once: true });
+  };
+
+  const handleTextMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    console.log('[LeftSidebar] 📝 Text button MOUSE DOWN');
+    isDraggingFromToolRef.current = true;
+    hasMovedRef.current = false;
+    startPosRef.current = { x: e.clientX, y: e.clientY };
+    
+    // Set up global mouse move and mouse up listeners
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      // Only trigger placement mode if mouse moves more than 5 pixels (intentional drag)
+      if (!hasMovedRef.current && startPosRef.current) {
+        const deltaX = Math.abs(moveEvent.clientX - startPosRef.current.x);
+        const deltaY = Math.abs(moveEvent.clientY - startPosRef.current.y);
+        const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+        
+        if (distance > 5) {
+          hasMovedRef.current = true;
+          console.log(`[LeftSidebar] 📝 Text - Mouse MOVED ${distance.toFixed(1)}px → calling onStartDragCreate (placement mode)`);
+          if (onStartDragCreate) {
+            onStartDragCreate('text');
+          }
+          cleanup();
+        }
+      }
+    };
+    
+    const handleMouseUp = () => {
+      // If released without moving, enter custom-size drag mode
+      console.log(`[LeftSidebar] 📝 Text - Mouse UP, hasMoved: ${hasMovedRef.current}`);
+      if (isDraggingFromToolRef.current && !hasMovedRef.current && onAddShape) {
+        console.log('[LeftSidebar] 📝 Text - Quick click detected → calling onAddShape (crosshair mode)');
+        onAddShape('text');
+      }
+      cleanup();
+    };
+    
+    const cleanup = () => {
+      isDraggingFromToolRef.current = false;
+      hasMovedRef.current = false;
+      startPosRef.current = null;
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
@@ -71,28 +180,26 @@ export default function LeftSidebar({ onAddShape, onStartDragCreate, onDeleteSel
         <span className={styles.tooltip}>Click or Drag to create</span>
       </button>
 
-      {/* Circle Tool - Disabled */}
+      {/* Circle Tool - Active */}
       <button
-        className={`${styles.toolButton} ${styles.disabled}`}
-        disabled
-        aria-label="Circle Tool"
-        aria-disabled="true"
-        title="Coming Soon"
+        className={`${styles.toolButton} ${styles.active}`}
+        onMouseDown={handleCircleMouseDown}
+        aria-label="Click: drag to size | Hold & drag: fixed size"
+        title="Click: drag to size | Hold & drag: fixed size"
       >
         <Circle size={20} strokeWidth={2} />
-        <span className={styles.tooltip}>Coming Soon</span>
+        <span className={styles.tooltip}>Click or Drag to create</span>
       </button>
 
-      {/* Text Tool - Disabled */}
+      {/* Text Tool - Active */}
       <button
-        className={`${styles.toolButton} ${styles.disabled}`}
-        disabled
-        aria-label="Text Tool"
-        aria-disabled="true"
-        title="Coming Soon"
+        className={`${styles.toolButton} ${styles.active}`}
+        onMouseDown={handleTextMouseDown}
+        aria-label="Click: drag to size | Hold & drag: fixed size"
+        title="Click: drag to size | Hold & drag: fixed size"
       >
         <Type size={20} strokeWidth={2} />
-        <span className={styles.tooltip}>Coming Soon</span>
+        <span className={styles.tooltip}>Click or Drag to create</span>
       </button>
 
       {/* Line Tool - Disabled */}

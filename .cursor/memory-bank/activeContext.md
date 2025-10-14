@@ -1,20 +1,63 @@
 # Active Context: CollabCanvas
 
-**Last Updated:** October 14, 2025  
-**Current Phase:** Post-MVP, Ready for Phase 2 Planning
+**Last Updated:** October 14, 2025 (Evening)  
+**Current Phase:** Phase 2 Development - Circle Shapes + AI Framework
 
 ## Current Focus
-The MVP is complete and production-ready. All 8 hard gate requirements are met. The immediate focus is:
+The MVP is deployed to production (v1.0.0-production). Phase 2 development is underway:
 
-1. **Stabilize Recent Changes**: PR #10 architecture refactor needs production validation
-2. **Performance Testing**: Verify the individual document architecture performs as expected
-3. **Documentation Review**: Ensure all docs reflect the new architecture
-4. **Phase 2 Planning**: Prepare for AI agent integration and additional features
+1. **✅ Complete**: Circle shape implementation with full real-time sync
+2. **✅ Complete**: AI framework foundation (LangChain + OpenAI ready)
+3. **🔄 Next**: OpenAI integration for natural language canvas control
+4. **📋 Planning**: Additional shape types (text, lines) for richer AI commands
+
+## Branch: feature/circle-shape-and-ai-framework
 
 ## Recent Changes
 
+### Phase 2: Circle Shapes + AI Framework (October 14, 2025 - Evening)
+**Status:** ✅ Complete, ready for testing
+**Branch:** feature/circle-shape-and-ai-framework
+
+**What Changed:**
+1. **Circle Shape Support**:
+   - Added `ShapeType = 'rectangle' | 'circle'` union type
+   - Created `Circle.tsx` component matching Rectangle pattern
+   - Updated Canvas to conditionally render Rectangle or Circle
+   - Added circle creation to LeftSidebar (drag-create pattern)
+   - Full real-time sync support (create, move, delete, lock)
+
+2. **AI Framework Foundation**:
+   - Installed `langchain`, `@langchain/openai`, `openai` packages
+   - Created `aiCommandParser.ts` for simple regex-based parsing
+   - Created `aiService.ts` with OpenAI integration placeholders
+   - Built `AICommandInput` UI component (bottom-right corner)
+   - Integrated AI commands into Canvas with shape creation
+   - Added `VITE_OPENAI_API_KEY` to environment config
+
+3. **Utilities**:
+   - Added `getRandomColor()` to colorUtils for AI-generated shapes
+
+**Impact:**
+- Users can now create circles alongside rectangles
+- AI framework is in place, ready for OpenAI function calling
+- Simple commands work: "create red circle", "create blue rectangle"
+- Foundation set for complex multi-step AI commands
+
+**Files Modified:**
+- `src/types/shape.types.ts` - ShapeType union
+- `src/components/Circle.tsx` - New component
+- `src/components/Canvas.tsx` - Circle rendering + AI integration
+- `src/components/LeftSidebar.tsx` - Circle tool enabled
+- `src/components/AI/AICommandInput.tsx` - New AI UI
+- `src/services/aiService.ts` - AI service structure
+- `src/services/aiCommandParser.ts` - Command parsing
+- `src/utils/colorUtils.ts` - getRandomColor()
+- `.env.example` - OpenAI API key config
+- `package.json` - LangChain dependencies
+
 ### PR #10: Firestore Architecture Refactor (October 14, 2025)
-**Status:** ✅ Complete, awaiting production validation
+**Status:** ✅ Complete, deployed to production
 
 **What Changed:**
 - Refactored from single Firestore document with array → individual documents per shape
