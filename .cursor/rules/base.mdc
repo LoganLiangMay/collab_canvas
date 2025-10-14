@@ -1,0 +1,246 @@
+Description: Core project rules and patterns for CollabCanvas development
+Globs: **/*.{ts,tsx,js,jsx}
+
+# CollabCanvas Core Development Rules
+
+## Project Identity
+This is **CollabCanvas** - a real-time collaborative canvas application built with React, TypeScript, Konva.js, and Firebase. The MVP is complete. We're now in Phase 2 planning for AI agent integration.
+
+## Critical Architecture Patterns
+
+### 1. Individual Firestore Documents Per Shape (NEVER arrays)
+**ALWAYS** create individual documents for shapes. **NEVER** use arrays in a single document.
+
+```typescript
+// ✅ CORRECT - Individual documents
+const shapeRef = doc(db, 'canvases', canvasId, 'shapes', shapeId);
+await setDoc(shapeRef, shape);
+
+// ❌ WRONG - Arrays cause transaction conflicts
+const canvasRef = doc(db, 'canvases', canvasId);
+await runTransaction(db, async (transaction) => {
+  const shapes = doc.data().shapes;
+  shapes.push(newShape); // This causes conflicts!
+});
+```
+
+**Why:** Individual documents eliminate transaction conflicts and enable 50+ concurrent users.
+
+### 2. Optimistic Updates Pattern
+**ALWAYS** update local state immediately, then sync to Firebase.
+
+```typescript
+// ✅ CORRECT Pattern
+const createShape = async (shape: Shape) => {
+  // 1. Optimistic - update UI immediately
+  setShapes(prev => [...prev, shape]);
+  
+  try {
+    // 2. Sync to Firebase
+    await setDoc(doc(db, 'canvases', canvasId, 'shapes', shape.id), shape);
+  } catch (error) {
+    // 3. Rollback on error
+    setShapes(prev => prev.filter(s => s.id !== shape.id));
+    showError("Failed to create shape");
+  }
+};
+```
+
+### 3. Firestore for Persistent, Realtime DB for Ephemeral
+**ALWAYS** use the right database for the right data:
+
+- **Firestore:** Shapes, user profiles, canvas metadata (persistent)
+- **Realtime Database:** Cursors, presence, activity status (ephemeral)
+
+**Why:** Realtime DB is faster and cheaper for frequent updates. Firestore is better for persistent data with transactions.
+
+### 4. Throttle Cursor Updates
+**ALWAYS** throttle cursor updates to 16ms (60fps).
+
+```typescript
+let lastUpdate = 0;
+const handleMouseMove = (e) => {
+  const now = Date.now();
+  if (now - lastUpdate < 16) return; // 60fps throttle
+  lastUpdate = now;
+  updateCursor(e.x, e.y);
+};
+```
+
+### 5. React.memo for Canvas Components
+**ALWAYS** use React.memo on frequently updating components (Rectangle, Cursor).
+
+```typescript
+export default React.memo(Rectangle, (prev, next) => {
+  return prev.x === next.x && prev.y === next.y && prev.isSelected === next.isSelected;
+});
+```
+
+## File Organization
+
+### Component Structure
+- **UI Components:** `/src/components/UI/` - Reusable UI elements (Button, Toast, Toolbar)
+- **Feature Components:** `/src/components/` - Domain-specific (Canvas, Rectangle, Cursor)
+- **Auth Components:** `/src/components/Auth/` - Authentication flows
+
+### Hook Organization
+- **Data Hooks:** `/src/hooks/` - Firebase integration (useShapeSync, useCursorSync, usePresence)
+- **One hook per Firebase collection/path**
+- **Return:** state, loading, error, and mutation functions
+
+### Type Organization
+- **Domain Types:** `/src/types/` - One file per domain (shape.types.ts, cursor.types.ts, user.types.ts)
+- **ALWAYS** export interfaces (not types) for object shapes
+- **ALWAYS** use TypeScript strict mode
+
+## Code Style Preferences
+
+### TypeScript
+- **ALWAYS** use strict mode
+- **NEVER** use `any` (use `unknown` if necessary)
+- **ALWAYS** define interfaces for Firebase documents
+- **PREFER** interfaces over types for objects
+
+### React Patterns
+- **PREFER** functional components (no class components except ErrorBoundary)
+- **ALWAYS** use hooks (useState, useEffect, custom hooks)
+- **PREFER** custom hooks over HOCs
+- **ALWAYS** clean up in useEffect returns
+
+### Error Handling
+- **ALWAYS** use try-catch for Firebase operations
+- **ALWAYS** show user-friendly error messages (Toast component)
+- **ALWAYS** log errors to errorLogger utility
+- **NEVER** throw errors without catching somewhere
+
+### Performance
+- **ALWAYS** profile before optimizing
+- **ALWAYS** monitor FPS during development
+- **PREFER** React.memo over useMemo for components
+- **SEPARATE** Konva layers for shapes vs cursors
+
+## Testing Strategy
+
+### What to Test
+- **Unit Tests:** Utilities, pure functions (canvasHelpers, colorUtils)
+- **Integration Tests:** Hooks with Firebase mocks (useShapeSync, concurrent operations)
+- **Manual Tests:** Multi-browser, multi-user (race conditions, real-time sync)
+
+### What NOT to Test
+- Firebase SDK internals
+- Konva.js rendering (trust the library)
+- Browser APIs (trust the platform)
+
+### Test File Naming
+- `ComponentName.test.tsx` for component tests
+- `hookName.test.ts` for hook tests
+- `hookName.integration.test.ts` for integration tests
+
+## Firebase Conventions
+
+### Canvas ID
+- **MVP:** Hardcoded as `"global-canvas-v1"`
+- **Phase 2:** Will use URL routing for multiple canvases
+
+### Document Paths
+```
+/canvases/{canvasId}/shapes/{shapeId}          // Firestore
+/cursors/{canvasId}/{userId}                   // Realtime DB
+/presence/{canvasId}/{userId}                  // Realtime DB
+```
+
+### Security Rules
+- **ALWAYS** require authentication (`request.auth != null`)
+- **ALWAYS** validate userId on create
+- **ALLOW** collaborative editing (any authenticated user can update shapes)
+
+## Common Pitfalls to Avoid
+
+### ❌ DON'T: Use transactions for individual documents
+```typescript
+// ❌ WRONG - Transactions not needed
+await runTransaction(db, async (transaction) => {
+  transaction.update(shapeRef, { x, y });
+});
+
+// ✅ CORRECT - Direct update
+await updateDoc(shapeRef, { x, y });
+```
+
+### ❌ DON'T: Update cursor on every mousemove
+```typescript
+// ❌ WRONG - Too many updates
+onMouseMove={(e) => updateCursor(e.x, e.y)} // 100+ updates/sec
+
+// ✅ CORRECT - Throttled
+const throttledUpdate = throttle(updateCursor, 16); // 60fps
+```
+
+### ❌ DON'T: Store large data in Realtime DB
+```typescript
+// ❌ WRONG - Shapes in Realtime DB
+set(ref(rtdb, `shapes/${shapeId}`), shape); // Use Firestore!
+
+// ✅ CORRECT - Cursors in Realtime DB
+set(ref(rtdb, `cursors/${userId}`), cursor); // Small, frequent updates
+```
+
+## Development Workflow
+
+### Before Starting a Feature
+1. Read relevant Memory Bank files (activeContext.md, systemPatterns.md)
+2. Check existing similar implementations
+3. Update activeContext.md with current focus
+4. Create tests first (TDD when appropriate)
+
+### During Development
+1. Keep FPS counter visible (check performance continuously)
+2. Test with multiple browser windows (catch real-time issues early)
+3. Check browser console frequently (catch errors immediately)
+4. Update documentation as you code (not after)
+
+### Before Committing
+1. Run `npm run build` (ensure TypeScript compiles)
+2. Run `npm test` (ensure tests pass)
+3. Multi-browser test (catch sync issues)
+4. Update relevant Memory Bank files
+5. Update progress.md with what changed
+
+## Phase 2 Considerations
+
+### AI Agent Integration (Upcoming)
+- Will use function calling (OpenAI or Claude)
+- Must maintain real-time sync for AI-generated shapes
+- Need to handle multi-step operations
+- Consider bundle size impact of AI SDK
+
+### Technical Debt to Address
+1. Fix 3 failing tests before adding new features
+2. Add mobile responsive design
+3. Implement accessibility features
+4. Set up production error monitoring (Sentry)
+
+## Key Files Reference
+
+### Most Modified Files
+- `src/components/Canvas.tsx` - Main canvas component, touches everything
+- `src/hooks/useShapeSync.ts` - Core shape sync logic, critical for collaboration
+- `src/firebase.ts` - Firebase initialization, used everywhere
+
+### Don't Modify Lightly
+- `firestore.rules` - Security rules, test thoroughly before deploying
+- `database.rules.json` - Realtime DB rules, affects cursor performance
+- `src/contexts/AuthContext.tsx` - Auth logic, many components depend on it
+
+## Performance Targets (NEVER Regress)
+- **FPS:** 60 minimum during all interactions
+- **Shape Sync:** <100ms maximum
+- **Cursor Sync:** <50ms maximum
+- **Bundle Size:** <1.5MB total (currently 1.2MB)
+
+## When in Doubt
+1. Check Memory Bank first (`.cursor/memory-bank/`)
+2. Look at existing similar code (consistency matters)
+3. Test with multiple users (real-time issues are subtle)
+4. Profile before optimizing (don't guess)
+5. Keep it simple (last-write-wins beats CRDTs for MVP)

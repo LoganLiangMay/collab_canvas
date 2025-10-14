@@ -1,0 +1,22 @@
+{
+  "rules": {
+    "cursors": {
+      "$canvasId": {
+        ".read": "auth != null",
+        "$userId": {
+          ".write": "auth != null && $userId == auth.uid"
+        }
+      }
+    },
+    "presence": {
+      "$canvasId": {
+        ".read": "auth != null",
+        "$userId": {
+          ".write": "auth != null && $userId == auth.uid"
+        }
+      }
+    }
+  }
+}
+
+

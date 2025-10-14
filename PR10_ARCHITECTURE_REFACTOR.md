@@ -328,3 +328,4 @@ firebase deploy --only firestore:rules
 *Version: 1.0.0*  
 *Author: Architecture Refactor Team*
 
+

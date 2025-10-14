@@ -1,0 +1,368 @@
+@base.mdc
+Description: Firebase-specific patterns and best practices for CollabCanvas
+Globs: **/*.{ts,tsx}
+
+# Firebase Development Rules
+
+## Individual Documents Architecture (CRITICAL)
+
+### The Golden Rule
+**Every shape MUST be an individual Firestore document. NEVER use arrays.**
+
+This is the MOST IMPORTANT architectural decision in the entire codebase. Breaking this rule will cause transaction conflicts and make multi-user collaboration fail.
+
+### Correct Pattern
+```typescript
+// ✅ Create individual document
+const shapesCollection = collection(db, 'canvases', canvasId, 'shapes');
+const shapeDoc = doc(shapesCollection, shapeId);
+await setDoc(shapeDoc, shape);
+
+// ✅ Update individual document
+await updateDoc(shapeDoc, { x: newX, y: newY });
+
+// ✅ Delete individual document
+await deleteDoc(shapeDoc);
+
+// ✅ Listen to collection
+const unsubscribe = onSnapshot(shapesCollection, (snapshot) => {
+  const shapes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  setShapes(shapes);
+});
+```
+
+### Incorrect Pattern (NEVER DO THIS)
+```typescript
+// ❌ Single document with array - CAUSES CONFLICTS
+const canvasDoc = doc(db, 'canvases', canvasId);
+await runTransaction(db, async (transaction) => {
+  const canvas = (await transaction.get(canvasDoc)).data();
+  canvas.shapes.push(newShape); // WRONG - causes conflicts
+  transaction.update(canvasDoc, { shapes: canvas.shapes });
+});
+```
+
+## Firestore vs Realtime Database
+
+### Use Firestore For:
+- **Shapes** - Persistent, structured data
+- **User Profiles** - Infrequent updates
+- **Canvas Metadata** - Name, owner, settings
+- **Anything that needs to persist**
+
+### Use Realtime Database For:
+- **Cursor Positions** - 60 updates/second per user
+- **User Presence** - Active/away/offline status
+- **Ephemeral Data** - Doesn't need to survive disconnects
+- **Anything updated more than once per second**
+
+### Why the Separation?
+- **Cost:** Realtime DB is cheaper for frequent updates (cursor = 3,600 updates/minute per user)
+- **Latency:** Realtime DB is faster (20-30ms vs 50-100ms)
+- **Cleanup:** Realtime DB has built-in onDisconnect()
+
+## Error Handling Patterns
+
+### Firestore Operations
+```typescript
+const createShape = async (shape: Shape) => {
+  // 1. Optimistic update
+  setShapes(prev => [...prev, shape]);
+  
+  try {
+    // 2. Firebase write
+    const shapeRef = doc(db, 'canvases', canvasId, 'shapes', shape.id);
+    await setDoc(shapeRef, shape);
+    
+  } catch (error) {
+    // 3. Handle specific error codes
+    if (error.code === 'permission-denied') {
+      showError('You do not have permission to create shapes');
+    } else if (error.code === 'unavailable') {
+      showError('Network error. Please check your connection');
+    } else {
+      showError('Failed to create shape');
+    }
+    
+    // 4. Rollback optimistic update
+    setShapes(prev => prev.filter(s => s.id !== shape.id));
+    
+    // 5. Log for debugging
+    errorLogger.log('create-shape-error', error, { shapeId: shape.id });
+  }
+};
+```
+
+### Not-Found Errors (Special Case)
+```typescript
+// When deleting, not-found is acceptable (already deleted)
+try {
+  await deleteDoc(shapeRef);
+} catch (error) {
+  if (error.code === 'not-found') {
+    // Silent success - shape already gone
+    return;
+  }
+  throw error; // Re-throw other errors
+}
+```
+
+## Realtime Database Patterns
+
+### Cursor Updates
+```typescript
+const updateCursor = async (x: number, y: number) => {
+  if (!user) return;
+  
+  const cursorRef = ref(rtdb, `cursors/${canvasId}/${user.uid}`);
+  
+  // Simple set - no transaction needed
+  await set(cursorRef, {
+    x,
+    y,
+    name: user.displayName,
+    color: getUserColor(user.uid),
+    timestamp: Date.now()
+  });
+};
+```
+
+### Disconnect Handling
+```typescript
+useEffect(() => {
+  if (!user) return;
+  
+  const cursorRef = ref(rtdb, `cursors/${canvasId}/${user.uid}`);
+  const presenceRef = ref(rtdb, `presence/${canvasId}/${user.uid}`);
+  
+  // Set current data
+  set(cursorRef, cursorData);
+  set(presenceRef, presenceData);
+  
+  // Schedule cleanup on disconnect
+  onDisconnect(cursorRef).remove();
+  onDisconnect(presenceRef).remove();
+  
+  // Cleanup on unmount
+  return () => {
+    remove(cursorRef);
+    remove(presenceRef);
+  };
+}, [user, canvasId]);
+```
+
+## Security Rules
+
+### Firestore Rules Pattern
+```javascript
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    // Canvas shapes
+    match /canvases/{canvasId}/shapes/{shapeId} {
+      // Anyone can read
+      allow read: if isAuthenticated();
+      
+      // Must be authenticated and set own userId
+      allow create: if isAuthenticated() 
+                    && request.resource.data.userId == request.auth.uid;
+      
+      // Anyone can update (collaborative editing)
+      allow update: if isAuthenticated();
+      
+      // Only owner or lock holder can delete
+      allow delete: if isAuthenticated() 
+                    && (resource.data.userId == request.auth.uid
+                        || resource.data.lockedBy == request.auth.uid);
+    }
+  }
+}
+```
+
+### Realtime Database Rules Pattern
+```json
+{
+  "rules": {
+    "cursors": {
+      "$canvasId": {
+        "$userId": {
+          ".read": "auth != null",
+          ".write": "auth != null && auth.uid == $userId"
+        }
+      }
+    },
+    "presence": {
+      "$canvasId": {
+        "$userId": {
+          ".read": "auth != null",
+          ".write": "auth != null && auth.uid == $userId"
+        }
+      }
+    }
+  }
+}
+```
+
+## Performance Optimizations
+
+### Batch Reads (When Appropriate)
+```typescript
+// ❌ Multiple individual reads
+const shape1 = await getDoc(doc(db, 'canvases', canvasId, 'shapes', id1));
+const shape2 = await getDoc(doc(db, 'canvases', canvasId, 'shapes', id2));
+
+// ✅ Single query (when possible)
+const shapesQuery = query(
+  collection(db, 'canvases', canvasId, 'shapes'),
+  where('id', 'in', [id1, id2])
+);
+const snapshot = await getDocs(shapesQuery);
+```
+
+### Limit Listeners
+```typescript
+// ❌ Multiple listeners on same data
+useEffect(() => {
+  onSnapshot(collection(db, 'canvases', canvasId, 'shapes'), ...);
+}, [someState]); // Re-subscribes on every state change!
+
+// ✅ Single listener, stable dependencies
+useEffect(() => {
+  onSnapshot(collection(db, 'canvases', canvasId, 'shapes'), ...);
+}, [canvasId]); // Only re-subscribe if canvas changes
+```
+
+### Throttle Writes
+```typescript
+// Cursors - throttle to 60fps (16ms)
+let lastCursorUpdate = 0;
+const updateCursor = (x, y) => {
+  const now = Date.now();
+  if (now - lastCursorUpdate < 16) return;
+  lastCursorUpdate = now;
+  set(cursorRef, { x, y, timestamp: now });
+};
+
+// Shapes - debounce drag updates
+const debouncedUpdateShape = debounce((id, x, y) => {
+  updateDoc(doc(db, 'canvases', canvasId, 'shapes', id), { x, y });
+}, 100); // Update at most once per 100ms
+```
+
+## Quota Management
+
+### Free Tier Limits
+- **Firestore:** 50k reads/day, 20k writes/day
+- **Realtime DB:** 100 simultaneous connections
+- **Storage:** 1GB total
+- **Bandwidth:** 10GB/month download
+
+### Staying Under Limits
+1. **Use Realtime DB for cursors** - Much cheaper than Firestore
+2. **Throttle cursor updates** - 60fps max, not 100+fps
+3. **Use onSnapshot carefully** - Each listener costs reads
+4. **Cache locally when possible** - Don't re-fetch unchanged data
+5. **Clean up listeners** - Unsubscribe in useEffect cleanup
+
+## Common Firebase Mistakes
+
+### ❌ Mistake 1: Not cleaning up listeners
+```typescript
+// ❌ Memory leak
+useEffect(() => {
+  onSnapshot(shapesRef, setShapes); // Never unsubscribed!
+}, []);
+
+// ✅ Proper cleanup
+useEffect(() => {
+  const unsubscribe = onSnapshot(shapesRef, setShapes);
+  return unsubscribe; // Cleanup on unmount
+}, []);
+```
+
+### ❌ Mistake 2: Reading in loops
+```typescript
+// ❌ N+1 query problem
+for (const shapeId of shapeIds) {
+  const shape = await getDoc(doc(db, 'canvases', canvasId, 'shapes', shapeId));
+  // Multiple reads!
+}
+
+// ✅ Single query
+const shapesQuery = query(
+  collection(db, 'canvases', canvasId, 'shapes'),
+  where('id', 'in', shapeIds)
+);
+const snapshot = await getDocs(shapesQuery);
+```
+
+### ❌ Mistake 3: Using transactions unnecessarily
+```typescript
+// ❌ Transaction not needed for individual doc
+await runTransaction(db, async (transaction) => {
+  transaction.update(shapeRef, { x, y });
+});
+
+// ✅ Direct update is fine
+await updateDoc(shapeRef, { x, y });
+```
+
+## Testing with Firebase
+
+### Mock Firebase in Tests
+```typescript
+// src/test/setup.ts
+vi.mock('../firebase', () => ({
+  db: mockFirestore,
+  rtdb: mockRealtimeDB,
+  auth: mockAuth
+}));
+```
+
+### Test Real-Time Sync
+```typescript
+// Integration test pattern
+test('shape sync between users', async () => {
+  // User A creates shape
+  const shapeA = { id: '1', x: 100, y: 100 };
+  await createShape(shapeA);
+  
+  // Wait for Firestore sync
+  await waitFor(() => {
+    expect(mockOnSnapshot).toHaveBeenCalled();
+  });
+  
+  // User B should see it
+  expect(getUserBShapes()).toContainEqual(shapeA);
+});
+```
+
+## Deployment Checklist
+
+### Before Deploying Firebase Changes
+- [ ] Test security rules in Firebase Emulator
+- [ ] Check quota impact (will this exceed free tier?)
+- [ ] Verify all listeners clean up properly
+- [ ] Test with multiple concurrent users
+- [ ] Check error handling for offline scenarios
+
+### Deploy Order
+1. **Deploy rules first:** `firebase deploy --only firestore:rules,database`
+2. **Test rules in production** (create test shape, cursor)
+3. **Deploy hosting:** `firebase deploy --only hosting`
+4. **Monitor Firebase Console** for errors/quota
+
+## Resources
+- Firebase Console: https://console.firebase.google.com/project/collab-canvas-2a24a
+- Firestore Docs: https://firebase.google.com/docs/firestore
+- Realtime DB Docs: https://firebase.google.com/docs/database
+- Security Rules Reference: https://firebase.google.com/docs/rules

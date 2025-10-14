@@ -1,0 +1,32 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Canvas metadata document (optional - for future use)
+    match /canvases/{canvasId} {
+      allow read: if request.auth != null;
+      allow write: if false; // Metadata is read-only for now
+    }
+    
+    // Individual shape documents - core of collaborative editing
+    // Each shape is now its own document, eliminating transaction conflicts!
+    match /canvases/{canvasId}/shapes/{shapeId} {
+      // Anyone authenticated can read all shapes in the canvas
+      allow read: if request.auth != null;
+      
+      // Users can create shapes, but must set their own userId
+      allow create: if request.auth != null 
+                    && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.keys().hasAll(['id', 'type', 'x', 'y', 'width', 'height', 'fill', 'userId', 'createdAt', 'updatedAt']);
+      
+      // Anyone authenticated can update any shape (collaborative editing)
+      // This allows: position changes, locking/unlocking, property updates
+      allow update: if request.auth != null;
+      
+      // Anyone authenticated can delete any shape (collaborative editing)
+      // All users have equal permissions to clean up the canvas
+      allow delete: if request.auth != null;
+    }
+  }
+}

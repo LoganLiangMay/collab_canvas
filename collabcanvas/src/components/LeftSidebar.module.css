@@ -1,0 +1,154 @@
+/* Left Sidebar Container */
+.leftSidebar {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 64px;
+  height: 100vh;
+  background: #2d2d2d;
+  border-right: 1px solid #3d3d3d;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  z-index: 999;
+}
+
+/* Tool Section (top) */
+.toolSection {
+  padding: 16px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Bottom Section */
+.bottomSection {
+  padding: 16px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid #3d3d3d;
+}
+
+/* Tool Button Base */
+.toolButton {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+/* Active Button (Rectangle) */
+.toolButton.active {
+  background: #3d3d3d;
+  color: #3b82f6;
+}
+
+.toolButton.active:hover {
+  background: #4d4d4d;
+}
+
+/* Disabled Buttons (Circle, Text, Line, Delete when no selection) */
+.toolButton.disabled {
+  background: rgba(61, 61, 61, 0.3);
+  color: #5d5d5d;
+  cursor: not-allowed;
+}
+
+.toolButton.disabled:hover {
+  background: rgba(61, 61, 61, 0.3);
+}
+
+/* Delete Button (when shape is selected) */
+.toolButton.delete {
+  background: #3d3d3d;
+  color: #ffffff;
+}
+
+.toolButton.delete:hover {
+  background: #4d4d4d;
+  color: #dc2626;
+}
+
+/* Stress Test Button */
+.toolButton.stress {
+  background: #3d3d3d;
+  color: #f39c12;
+}
+
+.toolButton.stress:hover {
+  background: #4d4d4d;
+  color: #f1c40f;
+}
+
+/* Tooltip */
+.tooltip {
+  position: absolute;
+  left: 100%;
+  margin-left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: #2d2d2d;
+  color: white;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  z-index: 1000;
+  border: 1px solid #3d3d3d;
+}
+
+.toolButton:hover .tooltip {
+  opacity: 1;
+}
+
+/* Divider */
+.divider {
+  width: 40px;
+  height: 1px;
+  background: #3d3d3d;
+  margin: 4px 0;
+  flex-shrink: 0;
+}
+
+/* FPS Counter */
+.fpsCounter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 6px;
+  width: 48px;
+}
+
+.fpsLabel {
+  font-family: monospace;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.fpsValue {
+  font-family: monospace;
+  font-size: 16px;
+  color: #00ff00;
+  font-weight: 700;
+  line-height: 1;
+}
+
