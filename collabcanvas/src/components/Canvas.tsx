@@ -409,7 +409,7 @@ export default function Canvas() {
 
   // Handle shape addition from sidebar - Click = custom-size drag mode
   const handleAddShape = (type: 'rectangle' | 'circle' | 'text' | 'line') => {
-    if (type === 'rectangle') {
+    if (type === 'rectangle' || type === 'circle') {
       // Enter custom-size drag mode (user clicks and drags on canvas to define size)
       setIsDraggingCreate(true);
       setPlacementType(type);
@@ -517,23 +517,28 @@ export default function Canvas() {
 
   // Create shape from placement mode (fixed-size)
   const createPlacementShape = async () => {
-    if (!previewShape || !user) return;
+    if (!previewShape || !user || !placementType) return;
+    
+    // For circles, ensure width and height are equal (use width as diameter)
+    const shapeWidth = previewShape.width;
+    const shapeHeight = placementType === 'circle' ? previewShape.width : previewShape.height;
     
     try {
       await createShapeFirestore({
-        type: 'rectangle',
+        type: placementType as 'rectangle' | 'circle',
         x: previewShape.x,
         y: previewShape.y,
-        width: previewShape.width,
-        height: previewShape.height,
+        width: shapeWidth,
+        height: shapeHeight,
         fill: '#3498db',
         userId: user.uid,
       });
-      console.log(`[PLACEMENT] Created shape at (${previewShape.x.toFixed(2)}, ${previewShape.y.toFixed(2)})`);
+      console.log(`[PLACEMENT] Created ${placementType} at (${previewShape.x.toFixed(2)}, ${previewShape.y.toFixed(2)})`);
     } catch (err: any) {
       console.error('[createPlacementShape] Error:', err);
       errorLogger.logError('Failed to create shape via placement', err, { 
-        position: { x: previewShape.x, y: previewShape.y }
+        position: { x: previewShape.x, y: previewShape.y },
+        type: placementType
       });
       showToast('Failed to create shape', 'error');
     }
@@ -556,27 +561,32 @@ export default function Canvas() {
     }
     
     // Mode 1: Drag-create mode (custom-size) - create if dragged enough
-    if (isDraggingCreate && isMouseDown.current && previewShape && user) {
+    if (isDraggingCreate && isMouseDown.current && previewShape && user && placementType) {
       const minSize = 10; // Minimum size for a shape
       
+      // For circles, use the average of width and height to maintain circular shape
+      const shapeWidth = placementType === 'circle' ? Math.max(previewShape.width, previewShape.height) : previewShape.width;
+      const shapeHeight = placementType === 'circle' ? shapeWidth : previewShape.height;
+      
       // Only create if shape is large enough
-      if (previewShape.width >= minSize && previewShape.height >= minSize) {
+      if (shapeWidth >= minSize && shapeHeight >= minSize) {
         try {
           await createShapeFirestore({
-            type: 'rectangle',
+            type: placementType as 'rectangle' | 'circle',
             x: previewShape.x,
             y: previewShape.y,
-            width: previewShape.width,
-            height: previewShape.height,
+            width: shapeWidth,
+            height: shapeHeight,
             fill: '#3498db',
             userId: user.uid,
           });
-          console.log(`[DRAG CREATE] Created shape at (${previewShape.x.toFixed(2)}, ${previewShape.y.toFixed(2)}) with size ${previewShape.width.toFixed(2)}x${previewShape.height.toFixed(2)}`);
+          console.log(`[DRAG CREATE] Created ${placementType} at (${previewShape.x.toFixed(2)}, ${previewShape.y.toFixed(2)}) with size ${shapeWidth.toFixed(2)}x${shapeHeight.toFixed(2)}`);
         } catch (err: any) {
           console.error('[handleMouseUp] Error creating shape:', err);
           errorLogger.logError('Failed to create shape via drag', err, { 
             position: { x: previewShape.x, y: previewShape.y },
-            size: { width: previewShape.width, height: previewShape.height }
+            size: { width: shapeWidth, height: shapeHeight },
+            type: placementType
           });
           showToast('Failed to create shape', 'error');
         }
@@ -740,7 +750,6 @@ export default function Canvas() {
             {/* Render all shapes (rectangles and circles) */}
             {shapes.map((shape) => {
               const shapeProps = {
-                key: shape.id,
                 id: shape.id,
                 x: shape.x,
                 y: shape.y,
@@ -757,9 +766,9 @@ export default function Canvas() {
               };
 
               return shape.type === 'circle' ? (
-                <Circle {...shapeProps} />
+                <Circle key={shape.id} {...shapeProps} />
               ) : (
-                <Rectangle {...shapeProps} />
+                <Rectangle key={shape.id} {...shapeProps} />
               );
             })}
             
