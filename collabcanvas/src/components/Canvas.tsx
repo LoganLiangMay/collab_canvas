@@ -142,11 +142,12 @@ export default function Canvas() {
 
   // Handle pan state updates
   const handleStageDragStart = (e: Konva.KonvaEventObject<DragEvent>) => {
-    // CRITICAL: Prevent Stage from dragging if we're dragging a shape
+    // CRITICAL: Only process Stage drags, silently ignore shape drags
     // Check if the drag target is NOT the Stage itself (it's a shape)
     if (e.target !== e.currentTarget) {
-      console.log(`[STAGE DRAG START] ⚠️ BLOCKED - drag target is a shape, not the stage`);
-      e.currentTarget.stopDrag(); // Stop the Stage drag immediately
+      console.log(`[STAGE DRAG START] ⚠️ BLOCKED - drag target is a shape, not the stage (ignoring silently)`);
+      // DO NOT call stopDrag() - it interrupts the shape's drag!
+      // Just return and let all Stage drag handlers ignore this drag
       return;
     }
     
