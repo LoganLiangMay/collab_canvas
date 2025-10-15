@@ -206,7 +206,15 @@ export default function Canvas() {
   const handleShapeDragStart = async (id: string) => {
     if (!user) return;
     console.log(`[handleShapeDragStart] Locking shape ${id}`);
-    setIsDraggingShape(true); // Disable stage dragging
+    
+    // CRITICAL: Immediately disable Stage dragging SYNCHRONOUSLY
+    if (stageRef.current) {
+      stageRef.current.draggable(false);
+      console.log(`[handleShapeDragStart] 🔒 Stage dragging DISABLED synchronously`);
+    }
+    
+    setIsDraggingShape(true); // Also update state for React re-render
+    
     try {
       await lockShape(id, user.uid);
     } catch (err: any) {
@@ -218,7 +226,14 @@ export default function Canvas() {
   // Handle shape drag end (update position and unlock in ONE write - optimization!)
   const handleShapeDragEnd = async (id: string, x: number, y: number) => {
     console.log(`[handleShapeDragEnd] Updating position and unlocking shape ${id}`);
-    setIsDraggingShape(false); // Re-enable stage dragging
+    
+    // CRITICAL: Re-enable Stage dragging SYNCHRONOUSLY
+    if (stageRef.current) {
+      stageRef.current.draggable(true);
+      console.log(`[handleShapeDragEnd] 🔓 Stage dragging RE-ENABLED synchronously`);
+    }
+    
+    setIsDraggingShape(false); // Also update state for React re-render
     
     // Check if shape still exists before trying to update
     const shapeExists = shapes.find(s => s.id === id);
@@ -1124,7 +1139,7 @@ export default function Canvas() {
                   width={previewShape.width}
                   height={previewShape.height}
                   fill="#3498db"
-                  isSelected={false}
+                  isSelected={true}
                   isLocked={isPlacementMode}
                   lockedBy={undefined}
                   currentUserId={user?.uid}
