@@ -732,9 +732,17 @@ export default function Canvas() {
   };
 
   // Handle canvas mouse down - start custom-size creation
-  const handleCanvasMouseDown = () => {
+  const handleCanvasMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
     const stage = stageRef.current;
     if (!stage) return;
+
+    // CRITICAL: If clicking on a shape (not the Stage), pre-emptively disable Stage dragging
+    // This prevents the Stage from starting a drag that would interrupt the shape's drag
+    if (e.target !== e.currentTarget) {
+      console.log(`[handleCanvasMouseDown] 🔒 Mouse down on shape - disabling Stage drag pre-emptively`);
+      stage.draggable(false);
+      // Note: Stage dragging will be re-enabled in handleShapeDragEnd
+    }
 
     const pointer = stage.getPointerPosition();
     if (!pointer) return;
