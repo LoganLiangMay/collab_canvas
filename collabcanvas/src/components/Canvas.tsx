@@ -582,6 +582,7 @@ export default function Canvas() {
         // Store as: x,y = start point, width = deltaX, height = deltaY
         const deltaX = canvasX - startX;
         const deltaY = canvasY - startY;
+        console.log(`[LINE PREVIEW] Start: (${startX.toFixed(2)}, ${startY.toFixed(2)}), Current: (${canvasX.toFixed(2)}, ${canvasY.toFixed(2)}), Deltas: (${deltaX.toFixed(2)}, ${deltaY.toFixed(2)})`);
         setPreviewShape({ 
           x: startX, 
           y: startY, 
@@ -1047,6 +1048,7 @@ export default function Canvas() {
                   onSelect={() => {}}
                   onDragStart={() => {}}
                   onDragEnd={() => {}}
+                  opacity={0.7}
                 />
               ) : placementType === 'circle' ? (
                 <Circle

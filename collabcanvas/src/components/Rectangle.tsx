@@ -69,6 +69,15 @@ function Rectangle({
     e.cancelBubble = true; // Prevent stage from starting drag
   };
 
+  // Calculate dimensions text and badge dimensions
+  const dimensionsText = `${Math.round(width)} × ${Math.round(height)}`;
+  const badgePadding = { x: 8, y: 4 };
+  const badgeFontSize = 12;
+  // Approximate text width (rough estimate: 7px per character)
+  const textWidth = dimensionsText.length * 7;
+  const badgeWidth = textWidth + badgePadding.x * 2;
+  const badgeHeight = badgeFontSize + badgePadding.y * 2;
+
   return (
     <Group>
       <Rect
@@ -102,6 +111,34 @@ function Rectangle({
           fontStyle="bold"
           listening={false}
         />
+      )}
+
+      {/* Show dimensions badge when selected */}
+      {isSelected && (
+        <Group>
+          {/* Badge background */}
+          <Rect
+            x={x + width / 2 - badgeWidth / 2}
+            y={y + height + 10}
+            width={badgeWidth}
+            height={badgeHeight}
+            fill="#3498db"
+            cornerRadius={4}
+            listening={false}
+          />
+          {/* Dimensions text */}
+          <Text
+            x={x + width / 2 - badgeWidth / 2}
+            y={y + height + 10 + badgePadding.y}
+            width={badgeWidth}
+            text={dimensionsText}
+            fontSize={badgeFontSize}
+            fill="white"
+            align="center"
+            fontStyle="bold"
+            listening={false}
+          />
+        </Group>
       )}
     </Group>
   );

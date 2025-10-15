@@ -15,6 +15,7 @@ interface LineProps {
   onSelect: (id: string) => void;
   onDragEnd: (id: string, x: number, y: number) => void;
   onDragStart: (id: string) => void;
+  opacity?: number; // For preview mode
 }
 
 const Line = React.memo(({
@@ -31,6 +32,7 @@ const Line = React.memo(({
   onSelect,
   onDragEnd,
   onDragStart,
+  opacity = 1,
 }: LineProps) => {
   // Calculate endpoints from stored data
   // x, y = start point, width/height = delta to end point
@@ -114,6 +116,7 @@ const Line = React.memo(({
         lineCap="round"
         lineJoin="round"
         hitStrokeWidth={20} // Makes line easier to click
+        opacity={opacity}
       />
       
       {/* Endpoint circles for better visibility when selected */}
