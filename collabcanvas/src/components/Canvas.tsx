@@ -142,7 +142,8 @@ export default function Canvas() {
 
   // Handle pan state updates
   const handleStageDragStart = () => {
-    console.log(`[STAGE DRAG START] Position: (${stagePos.x.toFixed(2)}, ${stagePos.y.toFixed(2)}), Scale: ${stageScale.toFixed(2)}`);
+    console.log(`[STAGE DRAG START] ⚠️ WARNING: Stage is dragging! Position: (${stagePos.x.toFixed(2)}, ${stagePos.y.toFixed(2)}), Scale: ${stageScale.toFixed(2)}`);
+    console.log(`[STAGE DRAG START] 🐛 DEBUG: isDraggingShape: ${isDraggingShape}, isDraggingCreate: ${isDraggingCreate}, isPlacementMode: ${isPlacementMode}`);
   };
 
   const handleStageDrag = (e: Konva.KonvaEventObject<DragEvent>) => {
@@ -503,6 +504,12 @@ export default function Canvas() {
   }, [user, shapes, dimensions, stagePos, stageScale, selectedId, createShapeFirestore, handleDeleteSelected, showToast]);
 
   // Keyboard shortcuts
+  // Debug: Log Stage draggability changes
+  useEffect(() => {
+    const stageDraggable = !isDraggingShape && !isDraggingCreate && !isPlacementMode;
+    console.log(`[STAGE DRAGGABLE] 🎯 Stage draggable: ${stageDraggable} (isDraggingShape: ${isDraggingShape}, isDraggingCreate: ${isDraggingCreate}, isPlacementMode: ${isPlacementMode})`);
+  }, [isDraggingShape, isDraggingCreate, isPlacementMode]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't trigger shortcuts if currently editing text
@@ -650,6 +657,17 @@ export default function Canvas() {
           width: fixedWidth,
           height: fixedHeight
         });
+      } else if (placementType === 'line') {
+        // For lines in placement mode: horizontal line centered at cursor
+        const fixedLength = 120; // Default line length
+        // x,y = start point (left), width = deltaX, height = deltaY (0 for horizontal)
+        setPreviewShape({
+          x: canvasX - fixedLength / 2,
+          y: canvasY,
+          width: fixedLength,  // Horizontal line (deltaX)
+          height: 0            // No vertical component (deltaY = 0)
+        });
+        console.log(`[LINE PLACEMENT MODE] Fixed-size line preview at (${canvasX.toFixed(2)}, ${canvasY.toFixed(2)}), length: ${fixedLength}`);
       }
     } else {
       updateCursor(canvasX, canvasY);
@@ -714,12 +732,12 @@ export default function Canvas() {
     
     try {
       const shapeData: any = {
-        type: placementType as 'rectangle' | 'circle' | 'text',
+        type: placementType as 'rectangle' | 'circle' | 'text' | 'line',
         x: previewShape.x,
         y: previewShape.y,
         width: shapeWidth,
         height: shapeHeight,
-        fill: placementType === 'text' ? 'transparent' : '#3498db',
+        fill: placementType === 'text' ? 'transparent' : (placementType === 'line' ? '#3498db' : '#3498db'),
         userId: user.uid,
       };
 
@@ -727,6 +745,8 @@ export default function Canvas() {
       if (placementType === 'text') {
         shapeData.text = 'Text';
       }
+      
+      console.log(`[createPlacementShape] 📝 Shape data:`, shapeData);
 
       await createShapeFirestore(shapeData);
       console.log(`[PLACEMENT] ✅ Created ${placementType} at (${previewShape.x.toFixed(2)}, ${previewShape.y.toFixed(2)})`);

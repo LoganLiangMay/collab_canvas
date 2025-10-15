@@ -78,33 +78,60 @@ function Rectangle({
   const badgeWidth = textWidth + badgePadding.x * 2;
   const badgeHeight = badgeFontSize + badgePadding.y * 2;
 
+  // Corner handle positions (for Figma-style selection)
+  const handleSize = 6;
+  const handlePositions = [
+    { x: 0, y: 0 }, // top-left
+    { x: width, y: 0 }, // top-right
+    { x: 0, y: height }, // bottom-left
+    { x: width, y: height }, // bottom-right
+  ];
+
   return (
-    <Group>
+    <Group
+      x={x}
+      y={y}
+      draggable={isDraggable}
+      onMouseDown={handleMouseDown}
+      onDragStart={handleDragStart}
+      onDragMove={handleDrag}
+      onDragEnd={handleDragEnd}
+      onClick={handleClick}
+    >
+      {/* Main rectangle shape */}
       <Rect
-        x={x}
-        y={y}
+        x={0}
+        y={0}
         width={width}
         height={height}
         fill={fill}
         opacity={opacity}
-        draggable={isDraggable}
-        onMouseDown={handleMouseDown}
-        onDragStart={handleDragStart}
-        onDragMove={handleDrag}
-        onDragEnd={handleDragEnd}
-        onClick={handleClick}
         stroke={isSelected ? '#3498db' : isLockedByOther ? '#e74c3c' : undefined}
-        strokeWidth={isSelected || isLockedByOther ? 3 : 0}
-        shadowBlur={isSelected ? 10 : 0}
-        shadowColor={isSelected ? '#3498db' : undefined}
-        shadowOpacity={isSelected ? 0.5 : 0}
+        strokeWidth={isSelected || isLockedByOther ? 2 : 0}
       />
+      
+      {/* Figma-style corner handles when selected */}
+      {isSelected && handlePositions.map((pos, index) => (
+        <Group key={index}>
+          {/* White fill */}
+          <Rect
+            x={pos.x - handleSize / 2}
+            y={pos.y - handleSize / 2}
+            width={handleSize}
+            height={handleSize}
+            fill="white"
+            stroke="#3498db"
+            strokeWidth={2}
+            listening={false}
+          />
+        </Group>
+      ))}
       
       {/* Show lock indicator when locked by another user */}
       {isLockedByOther && (
         <Text
-          x={x}
-          y={y - 20}
+          x={0}
+          y={-20}
           text="🔒 Locked"
           fontSize={14}
           fill="#e74c3c"
@@ -113,13 +140,13 @@ function Rectangle({
         />
       )}
 
-      {/* Show dimensions badge when selected */}
+      {/* Show dimensions badge when selected - follows during drag */}
       {isSelected && (
         <Group>
           {/* Badge background */}
           <Rect
-            x={x + width / 2 - badgeWidth / 2}
-            y={y + height + 10}
+            x={width / 2 - badgeWidth / 2}
+            y={height + 10}
             width={badgeWidth}
             height={badgeHeight}
             fill="#3498db"
@@ -128,8 +155,8 @@ function Rectangle({
           />
           {/* Dimensions text */}
           <Text
-            x={x + width / 2 - badgeWidth / 2}
-            y={y + height + 10 + badgePadding.y}
+            x={width / 2 - badgeWidth / 2}
+            y={height + 10 + badgePadding.y}
             width={badgeWidth}
             text={dimensionsText}
             fontSize={badgeFontSize}

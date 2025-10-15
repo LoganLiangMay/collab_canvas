@@ -117,11 +117,22 @@ const Line = React.memo(({
     onSelect(id);
   };
 
+  // Debug: Check draggability (only log on changes to reduce spam)
+  const isDraggable = !isLocked || !lockedBy;
+  const prevDraggableRef = React.useRef<boolean>(isDraggable);
+  
+  React.useEffect(() => {
+    if (prevDraggableRef.current !== isDraggable) {
+      console.log(`[LINE DRAGGABILITY CHANGED] ID: ${id}, isDraggable: ${isDraggable}, isLocked: ${isLocked}, lockedBy: ${lockedBy}`);
+      prevDraggableRef.current = isDraggable;
+    }
+  }, [isDraggable, isLocked, lockedBy, id]);
+
   return (
     <Group
       x={x}
       y={y}
-      draggable={!isLocked || !lockedBy}
+      draggable={isDraggable}
       onMouseDown={handleMouseDown}
       onDragStart={handleDragStart}
       onDragMove={handleDrag}
