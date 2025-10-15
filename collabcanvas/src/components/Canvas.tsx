@@ -1022,6 +1022,14 @@ export default function Canvas() {
           width={dimensions.width}
           height={dimensions.height}
           draggable={!isDraggingShape && !isDraggingCreate && !isPlacementMode}
+          dragBoundFunc={(pos) => {
+            // CRITICAL: If dragging a shape, prevent Stage from moving AT ALL
+            // This ensures Stage drag doesn't interfere with shape drags
+            if (isDraggingShape || isDraggingCreate || isPlacementMode) {
+              return { x: stagePos.x, y: stagePos.y }; // Return current position (no movement)
+            }
+            return pos; // Allow normal Stage dragging
+          }}
           x={stagePos.x}
           y={stagePos.y}
           scaleX={stageScale}
