@@ -1,0 +1,154 @@
+import React from 'react';
+import { Line as KonvaLine, Group, Circle } from 'react-konva';
+
+interface LineProps {
+  id: string;
+  x: number;
+  y: number;
+  width: number;  // Delta X to end point
+  height: number; // Delta Y to end point
+  fill: string;   // Stroke color
+  isSelected: boolean;
+  isLocked: boolean;
+  lockedBy?: string;
+  lockedByName?: string;
+  onSelect: (id: string) => void;
+  onDragEnd: (id: string, x: number, y: number) => void;
+  onDragStart: (id: string) => void;
+}
+
+const Line = React.memo(({
+  id,
+  x,
+  y,
+  width,
+  height,
+  fill,
+  isSelected,
+  isLocked,
+  lockedBy,
+  lockedByName,
+  onSelect,
+  onDragEnd,
+  onDragStart,
+}: LineProps) => {
+  // Calculate endpoints from stored data
+  // x, y = start point, width/height = delta to end point
+  const startX = 0;
+  const startY = 0;
+  const endX = width;
+  const endY = height;
+
+  // Determine stroke color based on state
+  const getStrokeColor = () => {
+    if (isLocked && lockedBy) {
+      return '#e74c3c'; // Red for locked by another user
+    }
+    if (isSelected) {
+      return '#3498db'; // Blue for selected
+    }
+    return fill; // Normal fill color
+  };
+
+  // Determine stroke width based on state
+  const getStrokeWidth = () => {
+    if (isSelected || isLocked) {
+      return 4;
+    }
+    return 3;
+  };
+
+  const handleDragStart = () => {
+    if (!isLocked || !lockedBy) {
+      onDragStart(id);
+    }
+  };
+
+  const handleDragEnd = (e: any) => {
+    const node = e.target;
+    // Get the new position (group position changed during drag)
+    const newX = node.x();
+    const newY = node.y();
+    
+    onDragEnd(id, x + newX, y + newY);
+    
+    // Reset group position to 0,0 after updating parent coordinates
+    node.position({ x: 0, y: 0 });
+  };
+
+  const handleClick = () => {
+    onSelect(id);
+  };
+
+  return (
+    <Group
+      x={x}
+      y={y}
+      draggable={!isLocked || !lockedBy}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onClick={handleClick}
+      onTap={handleClick}
+    >
+      {/* Main line */}
+      <KonvaLine
+        points={[startX, startY, endX, endY]}
+        stroke={getStrokeColor()}
+        strokeWidth={getStrokeWidth()}
+        lineCap="round"
+        lineJoin="round"
+        hitStrokeWidth={20} // Makes line easier to click
+      />
+      
+      {/* Endpoint circles for better visibility when selected */}
+      {isSelected && (
+        <>
+          <Circle
+            x={startX}
+            y={startY}
+            radius={6}
+            fill="#3498db"
+            stroke="#ffffff"
+            strokeWidth={2}
+          />
+          <Circle
+            x={endX}
+            y={endY}
+            radius={6}
+            fill="#3498db"
+            stroke="#ffffff"
+            strokeWidth={2}
+          />
+        </>
+      )}
+      
+      {/* Lock indicator label */}
+      {isLocked && lockedBy && lockedByName && (
+        <KonvaLine
+          points={[startX, startY - 20, endX, endY - 20]}
+          stroke="#e74c3c"
+          strokeWidth={1}
+          dash={[5, 5]}
+        />
+      )}
+    </Group>
+  );
+}, (prevProps, nextProps) => {
+  // Custom comparison function for React.memo
+  // Only re-render if these props changed
+  return (
+    prevProps.x === nextProps.x &&
+    prevProps.y === nextProps.y &&
+    prevProps.width === nextProps.width &&
+    prevProps.height === nextProps.height &&
+    prevProps.fill === nextProps.fill &&
+    prevProps.isSelected === nextProps.isSelected &&
+    prevProps.isLocked === nextProps.isLocked &&
+    prevProps.lockedBy === nextProps.lockedBy
+  );
+});
+
+Line.displayName = 'Line';
+
+export default Line;
+

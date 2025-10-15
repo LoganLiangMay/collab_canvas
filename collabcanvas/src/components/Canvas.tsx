@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Stage, Layer, Line } from 'react-konva';
+import { Stage, Layer, Line as KonvaLine } from 'react-konva';
 import type Konva from 'konva';
 import { useAuth } from '../contexts/AuthContext';
 import { useShapeSync } from '../hooks/useShapeSync';
@@ -9,6 +9,7 @@ import { getUserCursorColor } from '../utils/colorUtils';
 import Rectangle from './Rectangle';
 import Circle from './Circle';
 import TextBox from './TextBox';
+import LineShape from './Line';
 import Cursor from './Cursor';
 import LeftSidebar from './LeftSidebar';
 import UserMenu from './UI/UserMenu';
@@ -535,14 +536,12 @@ export default function Canvas() {
   const handleAddShape = (type: 'rectangle' | 'circle' | 'text' | 'line') => {
     console.log(`[handleAddShape] Called with type: ${type}, isPlacementMode: ${isPlacementMode}, isDraggingCreate: ${isDraggingCreate}`);
     
-    if (type === 'rectangle' || type === 'circle' || type === 'text') {
-      // Enter custom-size drag mode (user clicks and drags on canvas to define size)
-      console.log(`[handleAddShape] ✅ Activating CROSSHAIR mode for ${type} (drag to define custom size)`);
-      setIsDraggingCreate(true);
-      setPlacementType(type);
-      if (stageRef.current) {
-        stageRef.current.draggable(false);
-      }
+    // All shape types now use crosshair mode (click start, drag to end/size)
+    console.log(`[handleAddShape] ✅ Activating CROSSHAIR mode for ${type} (drag to define ${type === 'line' ? 'endpoints' : 'custom size'})`);
+    setIsDraggingCreate(true);
+    setPlacementType(type);
+    if (stageRef.current) {
+      stageRef.current.draggable(false);
     }
   };
 
@@ -578,7 +577,18 @@ export default function Canvas() {
       const startX = dragStartPos.current.x;
       const startY = dragStartPos.current.y;
       
-      if (placementType === 'circle') {
+      if (placementType === 'line') {
+        // For lines: from start point to current cursor position
+        // Store as: x,y = start point, width = deltaX, height = deltaY
+        const deltaX = canvasX - startX;
+        const deltaY = canvasY - startY;
+        setPreviewShape({ 
+          x: startX, 
+          y: startY, 
+          width: deltaX, 
+          height: deltaY 
+        });
+      } else if (placementType === 'circle') {
         // For circles: expand radially from center using actual distance
         const deltaX = canvasX - startX;
         const deltaY = canvasY - startY;
@@ -744,26 +754,41 @@ export default function Canvas() {
     if (isDraggingCreate && isMouseDown.current && previewShape && user && placementType) {
       const minSize = 10; // Minimum size for a shape (diameter for circles)
       
-      // For circles, ensure width=height (diameter). For rectangles and text, use actual dimensions.
-      const shapeWidth = placementType === 'circle' ? Math.max(previewShape.width, previewShape.height) : previewShape.width;
-      const shapeHeight = placementType === 'circle' ? shapeWidth : previewShape.height;
+      let shapeWidth, shapeHeight, finalX, finalY;
+      let isValidSize = false;
       
-      // Position is already correct from preview:
-      // - Circles: x, y is already the center point
-      // - Rectangles/Text: x, y is already the top-left corner
-      const finalX = previewShape.x;
-      const finalY = previewShape.y;
+      if (placementType === 'line') {
+        // For lines: width/height are deltas, check minimum line length
+        const lineLength = Math.sqrt(previewShape.width * previewShape.width + previewShape.height * previewShape.height);
+        isValidSize = lineLength >= minSize;
+        shapeWidth = previewShape.width;  // deltaX
+        shapeHeight = previewShape.height; // deltaY
+        finalX = previewShape.x; // Start point
+        finalY = previewShape.y;
+      } else {
+        // For circles, ensure width=height (diameter). For rectangles and text, use actual dimensions.
+        shapeWidth = placementType === 'circle' ? Math.max(previewShape.width, previewShape.height) : previewShape.width;
+        shapeHeight = placementType === 'circle' ? shapeWidth : previewShape.height;
+        
+        // Position is already correct from preview:
+        // - Circles: x, y is already the center point
+        // - Rectangles/Text: x, y is already the top-left corner
+        finalX = previewShape.x;
+        finalY = previewShape.y;
+        
+        // Only create if shape is large enough
+        isValidSize = shapeWidth >= minSize && shapeHeight >= minSize;
+      }
       
-      // Only create if shape is large enough
-      if (shapeWidth >= minSize && shapeHeight >= minSize) {
+      if (isValidSize) {
         try {
           const shapeData: any = {
-            type: placementType as 'rectangle' | 'circle' | 'text',
+            type: placementType as 'rectangle' | 'circle' | 'text' | 'line',
             x: finalX,
             y: finalY,
             width: shapeWidth,
             height: shapeHeight,
-            fill: placementType === 'text' ? 'transparent' : '#3498db',
+            fill: placementType === 'text' ? 'transparent' : (placementType === 'line' ? '#3498db' : '#3498db'),
             userId: user.uid,
           };
 
@@ -773,7 +798,7 @@ export default function Canvas() {
           }
 
           await createShapeFirestore(shapeData);
-          console.log(`[DRAG CREATE] Created ${placementType} at (${finalX.toFixed(2)}, ${finalY.toFixed(2)}) with size ${shapeWidth.toFixed(2)}x${shapeHeight.toFixed(2)}`);
+          console.log(`[DRAG CREATE] Created ${placementType} at (${finalX.toFixed(2)}, ${finalY.toFixed(2)}) with ${placementType === 'line' ? `deltas (${shapeWidth.toFixed(2)}, ${shapeHeight.toFixed(2)})` : `size ${shapeWidth.toFixed(2)}x${shapeHeight.toFixed(2)}`}`);
         } catch (err: any) {
           console.error('[handleMouseUp] Error creating shape:', err);
           errorLogger.logError('Failed to create shape via drag', err, { 
@@ -824,7 +849,7 @@ export default function Canvas() {
     // Vertical lines
     for (let i = 0; i < width / gridSize; i++) {
       lines.push(
-        <Line
+        <KonvaLine
           key={`v-${i}`}
           points={[offsetX + i * gridSize, offsetY, offsetX + i * gridSize, offsetY + height]}
           stroke={gridColor}
@@ -837,7 +862,7 @@ export default function Canvas() {
     // Horizontal lines
     for (let i = 0; i < height / gridSize; i++) {
       lines.push(
-        <Line
+        <KonvaLine
           key={`h-${i}`}
           points={[offsetX, offsetY + i * gridSize, offsetX + width, offsetY + i * gridSize]}
           stroke={gridColor}
@@ -976,6 +1001,30 @@ export default function Canvas() {
                     onStartEdit={handleStartTextEdit}
                   />
                 );
+              } else if (shape.type === 'line') {
+                // Get the lockedByName for display
+                const lockedByName = shape.lockedBy ? 
+                  (shapes.find(s => s.userId === shape.lockedBy)?.userId || 'Another user') : 
+                  undefined;
+                
+                return (
+                  <LineShape
+                    key={shape.id}
+                    id={shape.id}
+                    x={shape.x}
+                    y={shape.y}
+                    width={shape.width}
+                    height={shape.height}
+                    fill={shape.fill}
+                    isSelected={shape.id === selectedId}
+                    isLocked={shape.isLocked || false}
+                    lockedBy={shape.lockedBy}
+                    lockedByName={lockedByName}
+                    onSelect={selectShape}
+                    onDragStart={handleShapeDragStart}
+                    onDragEnd={handleShapeDragEnd}
+                  />
+                );
               } else {
                 return <Rectangle key={shape.id} {...shapeProps} />;
               }
@@ -983,7 +1032,23 @@ export default function Canvas() {
             
             {/* Preview shape while dragging to create */}
             {previewShape && placementType && (isPlacementMode || (isDraggingCreate && isMouseDown.current)) && (
-              placementType === 'circle' ? (
+              placementType === 'line' ? (
+                <LineShape
+                  key="preview"
+                  id="preview"
+                  x={previewShape.x}
+                  y={previewShape.y}
+                  width={previewShape.width}
+                  height={previewShape.height}
+                  fill="#3498db"
+                  isSelected={true}
+                  isLocked={false}
+                  lockedBy={undefined}
+                  onSelect={() => {}}
+                  onDragStart={() => {}}
+                  onDragEnd={() => {}}
+                />
+              ) : placementType === 'circle' ? (
                 <Circle
                   key="preview"
                   id="preview"
