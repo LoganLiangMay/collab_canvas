@@ -1,5 +1,6 @@
 import React from 'react';
 import { Line as KonvaLine, Group, Circle } from 'react-konva';
+import type Konva from 'konva';
 
 interface LineProps {
   id: string;
@@ -60,42 +61,24 @@ const Line = React.memo(({
     return 3;
   };
 
-  const handleMouseDown = (e: any) => {
-    // CRITICAL: Stop ALL event propagation to prevent stage from capturing
-    e.cancelBubble = true;
-    if (e.evt) {
-      e.evt.stopPropagation();
-      e.evt.preventDefault();
-    }
-    console.log(`[LINE MOUSE DOWN] ID: ${id} - Stopping event propagation`);
+  // Match Rectangle/Circle behavior exactly - use typed Konva events
+  const handleMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
+    e.cancelBubble = true; // Prevent stage from starting drag
   };
 
-  const handleDragStart = (e: any) => {
-    // CRITICAL: Stop ALL event propagation
-    e.cancelBubble = true;
-    if (e.evt) {
-      e.evt.stopPropagation();
-      e.evt.preventDefault();
-    }
+  const handleDragStart = (e: Konva.KonvaEventObject<DragEvent>) => {
+    e.cancelBubble = true; // Prevent stage from receiving drag event
     console.log(`[LINE DRAG START] ID: ${id}, Position: (${x}, ${y})`);
-    if (!isLocked || !lockedBy) {
-      onDragStart(id);
-    }
+    onDragStart(id);
   };
 
-  const handleDrag = (e: any) => {
+  const handleDrag = (e: Konva.KonvaEventObject<DragEvent>) => {
     e.cancelBubble = true;
-    if (e.evt) {
-      e.evt.stopPropagation();
-    }
     console.log(`[LINE DRAGGING] ID: ${id}, Position: (${e.target.x().toFixed(2)}, ${e.target.y().toFixed(2)})`);
   };
 
-  const handleDragEnd = (e: any) => {
+  const handleDragEnd = (e: Konva.KonvaEventObject<DragEvent>) => {
     e.cancelBubble = true;
-    if (e.evt) {
-      e.evt.stopPropagation();
-    }
     // Get the new position directly from the dragged Group (matches Rectangle/Circle behavior)
     const newX = e.target.x();
     const newY = e.target.y();
@@ -105,12 +88,8 @@ const Line = React.memo(({
     onDragEnd(id, newX, newY);
   };
 
-  const handleClick = (e: any) => {
-    e.cancelBubble = true;
-    if (e.evt) {
-      e.evt.stopPropagation();
-    }
-    console.log(`[LINE CLICK] ID: ${id} - Selecting`);
+  const handleClick = (e: Konva.KonvaEventObject<MouseEvent>) => {
+    e.cancelBubble = true; // Prevent stage click
     onSelect(id);
   };
 
