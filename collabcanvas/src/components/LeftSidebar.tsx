@@ -160,6 +160,54 @@ export default function LeftSidebar({ onAddShape, onStartDragCreate, onDeleteSel
     document.addEventListener('mouseup', handleMouseUp, { once: true });
   };
 
+  const handleLineMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    console.log('[LeftSidebar] ➖ Line button MOUSE DOWN');
+    isDraggingFromToolRef.current = true;
+    hasMovedRef.current = false;
+    startPosRef.current = { x: e.clientX, y: e.clientY };
+    
+    // Set up global mouse move and mouse up listeners
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      // Only trigger placement mode if mouse moves more than 5 pixels (intentional drag)
+      if (!hasMovedRef.current && startPosRef.current) {
+        const deltaX = Math.abs(moveEvent.clientX - startPosRef.current.x);
+        const deltaY = Math.abs(moveEvent.clientY - startPosRef.current.y);
+        const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+        
+        if (distance > 5) {
+          hasMovedRef.current = true;
+          console.log(`[LeftSidebar] ➖ Line - Mouse MOVED ${distance.toFixed(1)}px → calling onStartDragCreate (placement mode)`);
+          if (onStartDragCreate) {
+            onStartDragCreate('line');
+          }
+          cleanup();
+        }
+      }
+    };
+    
+    const handleMouseUp = () => {
+      // If released without moving, enter custom-size drag mode (two-point line creation)
+      console.log(`[LeftSidebar] ➖ Line - Mouse UP, hasMoved: ${hasMovedRef.current}`);
+      if (isDraggingFromToolRef.current && !hasMovedRef.current && onAddShape) {
+        console.log('[LeftSidebar] ➖ Line - Quick click detected → calling onAddShape (crosshair mode for two-point line)');
+        onAddShape('line');
+      }
+      cleanup();
+    };
+    
+    const cleanup = () => {
+      isDraggingFromToolRef.current = false;
+      hasMovedRef.current = false;
+      startPosRef.current = null;
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+    
+    document.addEventListener('mousemove', handleMouseMove, { once: false });
+    document.addEventListener('mouseup', handleMouseUp, { once: true });
+  };
+
   const handleDeleteClick = () => {
     if (selectedShape) {
       onDeleteSelected();
@@ -202,16 +250,15 @@ export default function LeftSidebar({ onAddShape, onStartDragCreate, onDeleteSel
         <span className={styles.tooltip}>Click or Drag to create</span>
       </button>
 
-      {/* Line Tool - Disabled */}
+      {/* Line Tool - Active */}
       <button
-        className={`${styles.toolButton} ${styles.disabled}`}
-        disabled
-        aria-label="Line Tool"
-        aria-disabled="true"
-        title="Coming Soon"
+        className={`${styles.toolButton} ${styles.active}`}
+        onMouseDown={handleLineMouseDown}
+        aria-label="Click: drag to define endpoints | Hold & drag: fixed size"
+        title="Click: drag to define endpoints | Hold & drag: fixed size"
       >
         <Minus size={20} strokeWidth={2} />
-        <span className={styles.tooltip}>Coming Soon</span>
+        <span className={styles.tooltip}>Click or Drag to create</span>
       </button>
 
       {/* Divider */}
