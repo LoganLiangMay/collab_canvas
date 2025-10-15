@@ -61,11 +61,22 @@ const Line = React.memo(({
   };
 
   const handleMouseDown = (e: any) => {
-    e.cancelBubble = true; // Prevent stage from starting drag
+    // CRITICAL: Stop ALL event propagation to prevent stage from capturing
+    e.cancelBubble = true;
+    if (e.evt) {
+      e.evt.stopPropagation();
+      e.evt.preventDefault();
+    }
+    console.log(`[LINE MOUSE DOWN] ID: ${id} - Stopping event propagation`);
   };
 
   const handleDragStart = (e: any) => {
-    e.cancelBubble = true; // Prevent stage from receiving drag event
+    // CRITICAL: Stop ALL event propagation
+    e.cancelBubble = true;
+    if (e.evt) {
+      e.evt.stopPropagation();
+      e.evt.preventDefault();
+    }
     console.log(`[LINE DRAG START] ID: ${id}, Position: (${x}, ${y})`);
     if (!isLocked || !lockedBy) {
       onDragStart(id);
@@ -74,11 +85,17 @@ const Line = React.memo(({
 
   const handleDrag = (e: any) => {
     e.cancelBubble = true;
+    if (e.evt) {
+      e.evt.stopPropagation();
+    }
     console.log(`[LINE DRAGGING] ID: ${id}, Position: (${e.target.x().toFixed(2)}, ${e.target.y().toFixed(2)})`);
   };
 
   const handleDragEnd = (e: any) => {
     e.cancelBubble = true;
+    if (e.evt) {
+      e.evt.stopPropagation();
+    }
     const node = e.target;
     // Get the new position (group position changed during drag)
     const newX = node.x();
@@ -92,7 +109,11 @@ const Line = React.memo(({
   };
 
   const handleClick = (e: any) => {
-    e.cancelBubble = true; // Prevent stage click
+    e.cancelBubble = true;
+    if (e.evt) {
+      e.evt.stopPropagation();
+    }
+    console.log(`[LINE CLICK] ID: ${id} - Selecting`);
     onSelect(id);
   };
 

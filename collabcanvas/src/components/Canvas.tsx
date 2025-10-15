@@ -31,6 +31,7 @@ export default function Canvas() {
   const [isPlacementMode, setIsPlacementMode] = useState(false);
   const [placementType, setPlacementType] = useState<'rectangle' | 'circle' | 'text' | 'line' | null>(null);
   const [isDraggingCreate, setIsDraggingCreate] = useState(false);
+  const [isDraggingShape, setIsDraggingShape] = useState(false); // Track if user is dragging a shape
   const [previewShape, setPreviewShape] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const dragStartPos = useRef<{ x: number; y: number } | null>(null);
   const isMouseDown = useRef(false);
@@ -204,6 +205,7 @@ export default function Canvas() {
   const handleShapeDragStart = async (id: string) => {
     if (!user) return;
     console.log(`[handleShapeDragStart] Locking shape ${id}`);
+    setIsDraggingShape(true); // Disable stage dragging
     try {
       await lockShape(id, user.uid);
     } catch (err: any) {
@@ -215,6 +217,7 @@ export default function Canvas() {
   // Handle shape drag end (update position and unlock in ONE write - optimization!)
   const handleShapeDragEnd = async (id: string, x: number, y: number) => {
     console.log(`[handleShapeDragEnd] Updating position and unlocking shape ${id}`);
+    setIsDraggingShape(false); // Re-enable stage dragging
     
     // Check if shape still exists before trying to update
     const shapeExists = shapes.find(s => s.id === id);
@@ -571,6 +574,11 @@ export default function Canvas() {
     // Convert screen coordinates to canvas coordinates (accounting for pan/zoom)
     const canvasX = (pointer.x - stagePos.x) / stageScale;
     const canvasY = (pointer.y - stagePos.y) / stageScale;
+
+    // DEBUG: Log when in drag-create mode
+    if (isDraggingCreate) {
+      console.log(`[handleMouseMove] 🖱️ isDraggingCreate: ${isDraggingCreate}, isMouseDown: ${isMouseDown.current}, placementType: ${placementType}, dragStartPos: ${dragStartPos.current ? 'SET' : 'NULL'}`);
+    }
 
     // Handle drag-to-create (custom size)
     if (isDraggingCreate && isMouseDown.current && dragStartPos.current) {
@@ -953,7 +961,7 @@ export default function Canvas() {
           ref={stageRef}
           width={dimensions.width}
           height={dimensions.height}
-          draggable
+          draggable={!isDraggingShape && !isDraggingCreate && !isPlacementMode}
           x={stagePos.x}
           y={stagePos.y}
           scaleX={stageScale}
