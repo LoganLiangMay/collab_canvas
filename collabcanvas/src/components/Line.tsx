@@ -64,6 +64,13 @@ const Line = React.memo(({
   // Match Rectangle/Circle behavior exactly - use typed Konva events
   const handleMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
     e.cancelBubble = true; // Prevent stage from starting drag
+    
+    // CRITICAL: Pre-emptively disable Stage dragging to prevent conflicts
+    const stage = e.target.getStage();
+    if (stage) {
+      stage.draggable(false);
+      console.log(`[LINE MOUSE DOWN] 🔒 Disabled Stage dragging pre-emptively for line ${id}`);
+    }
   };
 
   const handleDragStart = (e: Konva.KonvaEventObject<DragEvent>) => {
