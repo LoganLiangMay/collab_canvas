@@ -207,12 +207,10 @@ export default function Canvas() {
     if (!user) return;
     console.log(`[handleShapeDragStart] Locking shape ${id}`);
     
-    // CRITICAL: Immediately stop any Stage drag and disable Stage dragging SYNCHRONOUSLY
+    // CRITICAL: Immediately disable Stage dragging SYNCHRONOUSLY
     if (stageRef.current) {
-      // Force-stop any drag operation on the Stage that might have started
-      stageRef.current.stopDrag();
       stageRef.current.draggable(false);
-      console.log(`[handleShapeDragStart] 🔒 Stage drag STOPPED and dragging DISABLED synchronously`);
+      console.log(`[handleShapeDragStart] 🔒 Stage dragging DISABLED synchronously`);
     }
     
     setIsDraggingShape(true); // Also update state for React re-render

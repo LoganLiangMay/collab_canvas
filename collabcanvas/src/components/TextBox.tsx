@@ -88,33 +88,52 @@ function TextBox({
     }
   };
 
+  // Calculate dimensions text and badge dimensions
+  const dimensionsText = `${Math.round(width)} × ${Math.round(height)}`;
+  const badgePadding = { x: 8, y: 4 };
+  const badgeFontSize = 12;
+  const textWidth = dimensionsText.length * 7;
+  const badgeWidth = textWidth + badgePadding.x * 2;
+  const badgeHeight = badgeFontSize + badgePadding.y * 2;
+
+  // Corner handle positions (for Figma-style selection)
+  const handleSize = 6;
+  const handlePositions = [
+    { x: 0, y: 0 }, // top-left
+    { x: width, y: 0 }, // top-right
+    { x: 0, y: height }, // bottom-left
+    { x: width, y: height }, // bottom-right
+  ];
+
   return (
-    <Group>
+    <Group
+      x={x}
+      y={y}
+      draggable={isDraggable}
+      onMouseDown={handleMouseDown}
+      onDragStart={handleDragStart}
+      onDragMove={handleDrag}
+      onDragEnd={handleDragEnd}
+      onClick={handleClick}
+      onDblClick={handleDoubleClick}
+    >
       {/* Invisible hitbox for smooth dragging - always present */}
       <Rect
-        x={x}
-        y={y}
+        x={0}
+        y={0}
         width={width}
         height={height}
         fill="transparent"
-        draggable={isDraggable}
-        onMouseDown={handleMouseDown}
-        onDragStart={handleDragStart}
-        onDragMove={handleDrag}
-        onDragEnd={handleDragEnd}
-        onClick={handleClick}
-        onDblClick={handleDoubleClick}
         stroke={isSelected ? '#3498db' : isLockedByOther ? '#e74c3c' : undefined}
         strokeWidth={isSelected || isLockedByOther ? 2 : 0}
-        dash={isSelected || isLockedByOther ? [5, 5] : undefined}
       />
       
       {/* Text display - white color, no background */}
       {/* Hide the text element when editing to prevent duplicate overlay */}
       {!isEditing && (
         <Text
-          x={x}
-          y={y}
+          x={0}
+          y={0}
           width={width}
           height={height}
           text={text}
@@ -128,17 +147,60 @@ function TextBox({
         />
       )}
       
+      {/* Figma-style corner handles when selected */}
+      {isSelected && handlePositions.map((pos, index) => (
+        <Rect
+          key={index}
+          x={pos.x - handleSize / 2}
+          y={pos.y - handleSize / 2}
+          width={handleSize}
+          height={handleSize}
+          fill="white"
+          stroke="#3498db"
+          strokeWidth={2}
+          listening={false}
+        />
+      ))}
+      
       {/* Show lock indicator when locked by another user */}
       {isLockedByOther && (
         <Text
-          x={x}
-          y={y - 20}
+          x={0}
+          y={-20}
           text="🔒 Locked"
           fontSize={14}
           fill="#e74c3c"
           fontStyle="bold"
           listening={false}
         />
+      )}
+
+      {/* Show dimensions badge when selected */}
+      {isSelected && (
+        <Group>
+          {/* Badge background */}
+          <Rect
+            x={width / 2 - badgeWidth / 2}
+            y={height + 10}
+            width={badgeWidth}
+            height={badgeHeight}
+            fill="#3498db"
+            cornerRadius={4}
+            listening={false}
+          />
+          {/* Dimensions text */}
+          <Text
+            x={width / 2 - badgeWidth / 2}
+            y={height + 10 + badgePadding.y}
+            width={badgeWidth}
+            text={dimensionsText}
+            fontSize={badgeFontSize}
+            fill="white"
+            align="center"
+            fontStyle="bold"
+            listening={false}
+          />
+        </Group>
       )}
     </Group>
   );

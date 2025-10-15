@@ -96,13 +96,12 @@ const Line = React.memo(({
     if (e.evt) {
       e.evt.stopPropagation();
     }
-    const node = e.target;
-    // Get the new absolute position (Group's position after drag)
-    const newX = node.x();
-    const newY = node.y();
+    // Get the new position directly from the dragged Group (matches Rectangle/Circle behavior)
+    const newX = e.target.x();
+    const newY = e.target.y();
     
     console.log(`[LINE DRAG END] ID: ${id}, Final Position: (${newX.toFixed(2)}, ${newY.toFixed(2)})`);
-    // Pass absolute position directly (node.x/y are already absolute, not relative)
+    // Pass the new position directly, just like Rectangle and Circle do
     onDragEnd(id, newX, newY);
   };
 
