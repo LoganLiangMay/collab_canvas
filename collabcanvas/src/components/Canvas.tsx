@@ -1104,7 +1104,7 @@ export default function Canvas() {
                   width={previewShape.width}
                   height={previewShape.height}
                   fill="#3498db"
-                  isSelected={false}
+                  isSelected={true}
                   isLocked={isPlacementMode}
                   lockedBy={undefined}
                   currentUserId={user?.uid}

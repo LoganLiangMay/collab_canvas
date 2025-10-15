@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Circle as KonvaCircle, Text, Group } from 'react-konva';
+import { Circle as KonvaCircle, Text, Group, Rect, Line } from 'react-konva';
 import type Konva from 'konva';
 
 interface CircleProps {
@@ -42,6 +42,7 @@ function Circle({
 
   // Calculate radius from width (diameter)
   const radius = width / 2;
+  const diameter = width;
 
   const handleDragStart = (e: Konva.KonvaEventObject<DragEvent>) => {
     e.cancelBubble = true; // Prevent stage from receiving drag event
@@ -71,38 +72,132 @@ function Circle({
     e.cancelBubble = true; // Prevent stage from starting drag
   };
 
+  // Calculate dimensions text and badge dimensions
+  const dimensionsText = `${Math.round(diameter)} × ${Math.round(diameter)}`;
+  const badgePadding = { x: 8, y: 4 };
+  const badgeFontSize = 12;
+  const textWidth = dimensionsText.length * 7;
+  const badgeWidth = textWidth + badgePadding.x * 2;
+  const badgeHeight = badgeFontSize + badgePadding.y * 2;
+
+  // Corner handle positions (on the bounding box corners, relative to Group position)
+  const handleSize = 6;
+  const handlePositions = [
+    { x: -radius, y: -radius }, // top-left
+    { x: radius, y: -radius }, // top-right
+    { x: -radius, y: radius }, // bottom-left
+    { x: radius, y: radius }, // bottom-right
+  ];
+
   return (
-    <Group>
+    <Group
+      x={x}
+      y={y}
+      draggable={isDraggable}
+      onMouseDown={handleMouseDown}
+      onDragStart={handleDragStart}
+      onDragMove={handleDrag}
+      onDragEnd={handleDragEnd}
+      onClick={handleClick}
+    >
+      {/* Main circle shape */}
       <KonvaCircle
-        x={x}
-        y={y}
+        x={0}
+        y={0}
         radius={radius}
         fill={fill}
         opacity={opacity}
-        draggable={isDraggable}
-        onMouseDown={handleMouseDown}
-        onDragStart={handleDragStart}
-        onDragMove={handleDrag}
-        onDragEnd={handleDragEnd}
-        onClick={handleClick}
-        stroke={isSelected ? '#3498db' : isLockedByOther ? '#e74c3c' : undefined}
-        strokeWidth={isSelected || isLockedByOther ? 3 : 0}
-        shadowBlur={isSelected ? 10 : 0}
-        shadowColor={isSelected ? '#3498db' : undefined}
-        shadowOpacity={isSelected ? 0.5 : 0}
+        stroke={isLockedByOther ? '#e74c3c' : undefined}
+        strokeWidth={isLockedByOther ? 2 : 0}
       />
+      
+      {/* Bounding box when selected */}
+      {isSelected && (
+        <Rect
+          x={-radius}
+          y={-radius}
+          width={diameter}
+          height={diameter}
+          stroke="#3498db"
+          strokeWidth={2}
+          listening={false}
+        />
+      )}
+
+      {/* Crosshair when selected */}
+      {isSelected && (
+        <Group>
+          {/* Horizontal line */}
+          <Line
+            points={[-radius, 0, radius, 0]}
+            stroke="#3498db"
+            strokeWidth={1}
+            listening={false}
+          />
+          {/* Vertical line */}
+          <Line
+            points={[0, -radius, 0, radius]}
+            stroke="#3498db"
+            strokeWidth={1}
+            listening={false}
+          />
+        </Group>
+      )}
+      
+      {/* Corner handles when selected */}
+      {isSelected && handlePositions.map((pos, index) => (
+        <Rect
+          key={index}
+          x={pos.x - handleSize / 2}
+          y={pos.y - handleSize / 2}
+          width={handleSize}
+          height={handleSize}
+          fill="white"
+          stroke="#3498db"
+          strokeWidth={2}
+          listening={false}
+        />
+      ))}
       
       {/* Show lock indicator when locked by another user */}
       {isLockedByOther && (
         <Text
-          x={x - 30}
-          y={y - radius - 20}
+          x={-30}
+          y={-radius - 20}
           text="🔒 Locked"
           fontSize={14}
           fill="#e74c3c"
           fontStyle="bold"
           listening={false}
         />
+      )}
+
+      {/* Show dimensions badge when selected */}
+      {isSelected && (
+        <Group>
+          {/* Badge background */}
+          <Rect
+            x={-badgeWidth / 2}
+            y={radius + 10}
+            width={badgeWidth}
+            height={badgeHeight}
+            fill="#3498db"
+            cornerRadius={4}
+            listening={false}
+          />
+          {/* Dimensions text */}
+          <Text
+            x={-badgeWidth / 2}
+            y={radius + 10 + badgePadding.y}
+            width={badgeWidth}
+            text={dimensionsText}
+            fontSize={badgeFontSize}
+            fill="white"
+            align="center"
+            fontStyle="bold"
+            listening={false}
+          />
+        </Group>
       )}
     </Group>
   );

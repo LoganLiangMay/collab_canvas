@@ -97,15 +97,13 @@ const Line = React.memo(({
       e.evt.stopPropagation();
     }
     const node = e.target;
-    // Get the new position (group position changed during drag)
+    // Get the new absolute position (Group's position after drag)
     const newX = node.x();
     const newY = node.y();
     
-    console.log(`[LINE DRAG END] ID: ${id}, Final Position: (${(x + newX).toFixed(2)}, ${(y + newY).toFixed(2)})`);
-    onDragEnd(id, x + newX, y + newY);
-    
-    // Reset group position to 0,0 after updating parent coordinates
-    node.position({ x: 0, y: 0 });
+    console.log(`[LINE DRAG END] ID: ${id}, Final Position: (${newX.toFixed(2)}, ${newY.toFixed(2)})`);
+    // Pass absolute position directly (node.x/y are already absolute, not relative)
+    onDragEnd(id, newX, newY);
   };
 
   const handleClick = (e: any) => {
