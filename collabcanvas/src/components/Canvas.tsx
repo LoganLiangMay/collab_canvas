@@ -1079,29 +1079,7 @@ export default function Canvas() {
                   />
                 );
               } else if (shape.type === 'line') {
-                // Get the lockedByName for display
-                const lockedByName = shape.lockedBy ? 
-                  (shapes.find(s => s.userId === shape.lockedBy)?.userId || 'Another user') : 
-                  undefined;
-                
-                return (
-                  <LineShape
-                    key={shape.id}
-                    id={shape.id}
-                    x={shape.x}
-                    y={shape.y}
-                    width={shape.width}
-                    height={shape.height}
-                    fill={shape.fill}
-                    isSelected={shape.id === selectedId}
-                    isLocked={shape.isLocked || false}
-                    lockedBy={shape.lockedBy}
-                    lockedByName={lockedByName}
-                    onSelect={selectShape}
-                    onDragStart={handleShapeDragStart}
-                    onDragEnd={handleShapeDragEnd}
-                  />
-                );
+                return <LineShape key={shape.id} {...shapeProps} />;
               } else {
                 return <Rectangle key={shape.id} {...shapeProps} />;
               }

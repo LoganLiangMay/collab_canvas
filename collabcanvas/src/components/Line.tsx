@@ -10,12 +10,12 @@ interface LineProps {
   height: number; // Delta Y to end point
   fill: string;   // Stroke color
   isSelected: boolean;
-  isLocked: boolean;
+  isLocked?: boolean;
   lockedBy?: string;
-  lockedByName?: string;
-  onSelect: (id: string) => void;
-  onDragEnd: (id: string, x: number, y: number) => void;
+  currentUserId?: string;
   onDragStart: (id: string) => void;
+  onDragEnd: (id: string, x: number, y: number) => void;
+  onClick: (id: string) => void;
   opacity?: number; // For preview mode
 }
 
@@ -29,12 +29,18 @@ const Line = React.memo(({
   isSelected,
   isLocked,
   lockedBy,
-  lockedByName,
-  onSelect,
-  onDragEnd,
+  currentUserId,
   onDragStart,
+  onDragEnd,
+  onClick,
   opacity = 1,
 }: LineProps) => {
+  // Match Rectangle's lock check logic
+  const isLockedByOther = isLocked && lockedBy !== currentUserId;
+  
+  // Allow dragging if not locked OR if locked by current user
+  const isDraggable = !isLocked || lockedBy === currentUserId;
+  
   // Calculate endpoints from stored data
   // x, y = start point, width/height = delta to end point
   const startX = 0;
@@ -42,22 +48,16 @@ const Line = React.memo(({
   const endX = width;
   const endY = height;
 
-  // Determine stroke color based on state
+  // Determine stroke color based on state (match Rectangle)
   const getStrokeColor = () => {
-    if (isLocked && lockedBy) {
-      return '#e74c3c'; // Red for locked by another user
-    }
-    if (isSelected) {
-      return '#3498db'; // Blue for selected
-    }
-    return fill; // Normal fill color
+    if (isSelected) return '#3498db'; // Blue for selected
+    if (isLockedByOther) return '#e74c3c'; // Red for locked by another user
+    return fill; // Default stroke color
   };
 
-  // Determine stroke width based on state
+  // Determine stroke width based on state (match Rectangle)
   const getStrokeWidth = () => {
-    if (isSelected || isLocked) {
-      return 4;
-    }
+    if (isSelected || isLockedByOther) return 3;
     return 3;
   };
 
@@ -93,11 +93,10 @@ const Line = React.memo(({
 
   const handleClick = (e: Konva.KonvaEventObject<MouseEvent>) => {
     e.cancelBubble = true; // Prevent stage click
-    onSelect(id);
+    onClick(id);
   };
 
   // Debug: Check draggability (only log on changes to reduce spam)
-  const isDraggable = !isLocked || !lockedBy;
   const prevDraggableRef = React.useRef<boolean>(isDraggable);
   
   React.useEffect(() => {
@@ -152,15 +151,7 @@ const Line = React.memo(({
         </>
       )}
       
-      {/* Lock indicator label */}
-      {isLocked && lockedBy && lockedByName && (
-        <KonvaLine
-          points={[startX, startY - 20, endX, endY - 20]}
-          stroke="#e74c3c"
-          strokeWidth={1}
-          dash={[5, 5]}
-        />
-      )}
+      {/* Lock indicator - removed for consistency with Rectangle/Circle */}
     </Group>
   );
 }, (prevProps, nextProps) => {
