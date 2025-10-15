@@ -58,25 +58,39 @@ const Line = React.memo(({
     return 3;
   };
 
-  const handleDragStart = () => {
+  const handleMouseDown = (e: any) => {
+    e.cancelBubble = true; // Prevent stage from starting drag
+  };
+
+  const handleDragStart = (e: any) => {
+    e.cancelBubble = true; // Prevent stage from receiving drag event
+    console.log(`[LINE DRAG START] ID: ${id}, Position: (${x}, ${y})`);
     if (!isLocked || !lockedBy) {
       onDragStart(id);
     }
   };
 
+  const handleDrag = (e: any) => {
+    e.cancelBubble = true;
+    console.log(`[LINE DRAGGING] ID: ${id}, Position: (${e.target.x().toFixed(2)}, ${e.target.y().toFixed(2)})`);
+  };
+
   const handleDragEnd = (e: any) => {
+    e.cancelBubble = true;
     const node = e.target;
     // Get the new position (group position changed during drag)
     const newX = node.x();
     const newY = node.y();
     
+    console.log(`[LINE DRAG END] ID: ${id}, Final Position: (${(x + newX).toFixed(2)}, ${(y + newY).toFixed(2)})`);
     onDragEnd(id, x + newX, y + newY);
     
     // Reset group position to 0,0 after updating parent coordinates
     node.position({ x: 0, y: 0 });
   };
 
-  const handleClick = () => {
+  const handleClick = (e: any) => {
+    e.cancelBubble = true; // Prevent stage click
     onSelect(id);
   };
 
@@ -85,7 +99,9 @@ const Line = React.memo(({
       x={x}
       y={y}
       draggable={!isLocked || !lockedBy}
+      onMouseDown={handleMouseDown}
       onDragStart={handleDragStart}
+      onDragMove={handleDrag}
       onDragEnd={handleDragEnd}
       onClick={handleClick}
       onTap={handleClick}
