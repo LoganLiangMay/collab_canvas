@@ -141,18 +141,34 @@ export default function Canvas() {
   };
 
   // Handle pan state updates
-  const handleStageDragStart = () => {
-    console.log(`[STAGE DRAG START] ⚠️ WARNING: Stage is dragging! Position: (${stagePos.x.toFixed(2)}, ${stagePos.y.toFixed(2)}), Scale: ${stageScale.toFixed(2)}`);
-    console.log(`[STAGE DRAG START] 🐛 DEBUG: isDraggingShape: ${isDraggingShape}, isDraggingCreate: ${isDraggingCreate}, isPlacementMode: ${isPlacementMode}`);
+  const handleStageDragStart = (e: Konva.KonvaEventObject<DragEvent>) => {
+    // CRITICAL: Prevent Stage from dragging if we're dragging a shape
+    // Check if the drag target is NOT the Stage itself (it's a shape)
+    if (e.target !== e.currentTarget) {
+      console.log(`[STAGE DRAG START] ⚠️ BLOCKED - drag target is a shape, not the stage`);
+      e.currentTarget.stopDrag(); // Stop the Stage drag immediately
+      return;
+    }
+    
+    console.log(`[STAGE DRAG START] Position: (${stagePos.x.toFixed(2)}, ${stagePos.y.toFixed(2)}), Scale: ${stageScale.toFixed(2)}`);
   };
 
   const handleStageDrag = (e: Konva.KonvaEventObject<DragEvent>) => {
+    // Extra safety: Ensure we're only tracking Stage drags, not shape drags
+    if (e.target !== e.currentTarget) {
+      return;
+    }
     const newX = e.target.x();
     const newY = e.target.y();
     console.log(`[STAGE DRAGGING] Position: (${newX.toFixed(2)}, ${newY.toFixed(2)})`);
   };
 
   const handleStageDragEnd = (e: Konva.KonvaEventObject<DragEvent>) => {
+    // Extra safety: Ensure we're only handling Stage drag end, not shape drag end
+    if (e.target !== e.currentTarget) {
+      console.log(`[STAGE DRAG END] ⚠️ BLOCKED - this was a shape drag, not stage drag`);
+      return;
+    }
     const newX = e.target.x();
     const newY = e.target.y();
     console.log(`[STAGE DRAG END] Final Position: (${newX.toFixed(2)}, ${newY.toFixed(2)})`);
