@@ -1,73 +1,178 @@
 /**
- * AI Service
+ * AI Service - OpenAI Function Calling Integration
  * 
- * Handles AI-powered canvas manipulation using OpenAI and LangChain.
- * Currently using placeholder implementation with simple parsing.
- * 
- * Future: Will integrate OpenAI function calling for advanced natural language understanding.
+ * Handles AI-powered canvas manipulation using OpenAI's function calling.
+ * Interprets natural language commands and translates them into canvas operations.
  */
 
-import type { Shape } from '../types/shape.types';
-import { parseCommand, type AICommand } from './aiCommandParser';
+import OpenAI from 'openai';
+import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import { canvasTools, SYSTEM_PROMPT } from './aiTools';
+import { executeFunction, type CanvasOperations, type ExecutionResult } from './aiExecutor';
 
 // Check if AI features are enabled via API key
 export const AI_ENABLED = Boolean(import.meta.env.VITE_OPENAI_API_KEY);
 
+// OpenAI client instance
+let openaiClient: OpenAI | null = null;
+
 /**
- * Execute an AI command on the canvas
- * 
- * @param command - Natural language command from user
- * @param canvasState - Current shapes on canvas (for context)
- * @returns Parsed command to execute
- * 
- * Future Enhancement: This will use OpenAI's function calling to interpret complex commands like:
- * - "Create a login form with username, password, and submit button"
- * - "Arrange all circles in a horizontal row"
- * - "Move the red rectangle to the center"
- * - "Create 5 blue circles spaced evenly"
+ * Get or create OpenAI client
  */
-export async function executeAICommand(
+function getOpenAIClient(): OpenAI {
+  if (!openaiClient && AI_ENABLED) {
+    openaiClient = new OpenAI({
+      apiKey: import.meta.env.VITE_OPENAI_API_KEY,
+      dangerouslyAllowBrowser: true, // Required for client-side usage
+    });
+  }
+  
+  if (!openaiClient) {
+    throw new Error('OpenAI API key not configured');
+  }
+  
+  return openaiClient;
+}
+
+/**
+ * AI Chat Message for conversation history
+ */
+export interface AIChatMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: number;
+  executionResult?: ExecutionResult;
+}
+
+/**
+ * Process a natural language command using OpenAI function calling
+ * 
+ * @param command - User's natural language command
+ * @param operations - Canvas operation functions
+ * @param conversationHistory - Previous messages for context
+ * @returns Execution results and AI response
+ */
+export async function processAICommand(
   command: string,
-  canvasState: Shape[]
-): Promise<AICommand> {
+  operations: CanvasOperations,
+  conversationHistory: AIChatMessage[] = []
+): Promise<{
+  response: string;
+  results: ExecutionResult[];
+  functionCalls: number;
+}> {
   console.log('[AI Service] Processing command:', command);
-  console.log('[AI Service] Canvas state:', canvasState.length, 'shapes');
-
-  // TODO: Implement OpenAI integration
-  // 
-  // Planned architecture:
-  // 1. Use ChatOpenAI from @langchain/openai
-  // 2. Define function calling schema for canvas operations:
-  //    - createShape(type, properties)
-  //    - moveShape(id, x, y)
-  //    - deleteShape(id)
-  //    - updateShape(id, properties)
-  //    - arrangeShapes(ids, layout)
-  // 3. Pass canvas state as context
-  // 4. Parse OpenAI's function call response
-  // 5. Return structured command
-  //
-  // Example:
-  // const chat = new ChatOpenAI({ 
-  //   openAIApiKey: import.meta.env.VITE_OPENAI_API_KEY,
-  //   modelName: "gpt-4",
-  // });
-  //
-  // const result = await chat.invoke([
-  //   new SystemMessage("You are a canvas manipulation assistant..."),
-  //   new HumanMessage(command)
-  // ], {
-  //   functions: [...canvasFunctions]
-  // });
-
-  // For now: Use simple regex parsing
-  const parsedCommand = parseCommand(command);
-
-  if (!parsedCommand) {
-    throw new Error('Could not understand command. Try: "create red circle" or "create blue rectangle"');
+  
+  if (!AI_ENABLED) {
+    throw new Error('AI features require OpenAI API key. Please add VITE_OPENAI_API_KEY to your .env.local file.');
   }
 
-  return parsedCommand;
+  const client = getOpenAIClient();
+  
+  // Build conversation context
+  const messages: ChatCompletionMessageParam[] = [
+    { role: 'system', content: SYSTEM_PROMPT },
+  ];
+
+  // Add recent conversation history (last 10 messages for context)
+  const recentHistory = conversationHistory.slice(-10);
+  for (const msg of recentHistory) {
+    if (msg.role === 'user' || msg.role === 'assistant') {
+      messages.push({
+        role: msg.role,
+        content: msg.content,
+      });
+    }
+  }
+
+  // Add current user command
+  messages.push({
+    role: 'user',
+    content: command,
+  });
+
+  try {
+    // Call OpenAI with function calling
+    const response = await client.chat.completions.create({
+      model: 'gpt-4',
+      messages,
+      tools: canvasTools,
+      tool_choice: 'auto', // Let AI decide when to use tools
+      temperature: 0.7,
+      max_tokens: 1000,
+    });
+
+    const aiMessage = response.choices[0].message;
+    const toolCalls = aiMessage.tool_calls || [];
+    
+    console.log(`[AI Service] Received ${toolCalls.length} function calls from OpenAI`);
+
+    const results: ExecutionResult[] = [];
+    let functionCallCount = 0;
+
+    // Execute each function call
+    for (const toolCall of toolCalls) {
+      if (toolCall.type === 'function') {
+        const functionName = toolCall.function.name;
+        const functionArgs = JSON.parse(toolCall.function.arguments);
+        
+        console.log(`[AI Service] Executing: ${functionName}`, functionArgs);
+        
+        const result = await executeFunction(functionName, functionArgs, operations);
+        results.push(result);
+        functionCallCount++;
+      }
+    }
+
+    // Generate response message
+    let responseText = aiMessage.content || '';
+    
+    if (results.length > 0) {
+      const successfulResults = results.filter(r => r.success);
+      const failedResults = results.filter(r => !r.success);
+      
+      if (successfulResults.length > 0) {
+        const messages = successfulResults.map(r => r.message).join('. ');
+        responseText = responseText || messages;
+      }
+      
+      if (failedResults.length > 0) {
+        const errors = failedResults.map(r => r.error || r.message).join('. ');
+        responseText += failedResults.length > 0 ? `\n\nErrors: ${errors}` : '';
+      }
+    }
+
+    // If no function calls but we have AI text response
+    if (results.length === 0 && responseText) {
+      console.log('[AI Service] AI provided text response without function calls');
+    }
+
+    // If no response at all, provide default
+    if (!responseText) {
+      responseText = 'I processed your request. Let me know if you need anything else!';
+    }
+
+    return {
+      response: responseText,
+      results,
+      functionCalls: functionCallCount,
+    };
+
+  } catch (error: any) {
+    console.error('[AI Service] Error:', error);
+    
+    // Provide helpful error messages
+    if (error.status === 401) {
+      throw new Error('Invalid OpenAI API key. Please check your .env.local file.');
+    } else if (error.status === 429) {
+      throw new Error('Rate limit exceeded. Please try again in a moment.');
+    } else if (error.code === 'ENOTFOUND' || error.message?.includes('network')) {
+      throw new Error('Network error. Please check your internet connection.');
+    } else {
+      throw new Error(`AI service error: ${error.message || 'Unknown error'}`);
+    }
+  }
 }
 
 /**
@@ -89,16 +194,22 @@ export function validateAIService(): { isValid: boolean; error?: string } {
  */
 export function getAIServiceStatus(): {
   enabled: boolean;
-  implementation: 'placeholder' | 'openai';
+  implementation: 'openai' | 'disabled';
   features: string[];
 } {
   return {
     enabled: AI_ENABLED,
-    implementation: 'placeholder', // Will be 'openai' after integration
-    features: [
-      'Create shapes (rectangles, circles)',
-      'Basic color selection',
-      'Delete shapes',
+    implementation: AI_ENABLED ? 'openai' : 'disabled',
+    features: AI_ENABLED ? [
+      'Create shapes (rectangles, circles, text, lines)',
+      'Move, resize, and rotate shapes',
+      'Change colors and styles',
+      'Arrange shapes in layouts (grids, rows, columns)',
+      'Align and distribute shapes',
+      'Complex multi-step operations',
+      'Natural language understanding via GPT-4',
+    ] : [
+      'AI features disabled - API key required',
     ],
   };
 }

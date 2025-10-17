@@ -87,7 +87,7 @@ export default function UserMenu({ presence }: UserMenuProps) {
     return a.userName.localeCompare(b.userName);
   });
 
-  const activeUserCount = userStatuses.filter(s => s.status === 'active' || s.status === 'away').length;
+  const activeUserCount = userStatuses.filter(s => s.status === 'active').length;
 
   const getStatusColor = (status: 'active' | 'away' | 'offline') => {
     switch (status) {

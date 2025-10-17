@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { collection, doc, onSnapshot, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { collection, doc, onSnapshot, setDoc, updateDoc, deleteDoc, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import type { Shape } from '../types/shape.types';
 import { errorLogger } from '../utils/errorLogger';
@@ -13,6 +13,7 @@ interface UseShapeSyncReturn {
   loading: boolean;
   error: string | null;
   createShape: (shape: Omit<Shape, 'id' | 'createdAt' | 'updatedAt'>) => Promise<void>;
+  createShapesBatch: (shapes: Omit<Shape, 'id' | 'createdAt' | 'updatedAt'>[]) => Promise<number>;
   updateShape: (id: string, updates: Partial<Shape>) => Promise<void>;
   deleteShape: (id: string) => Promise<void>;
   lockShape: (id: string, userId: string) => Promise<void>;
@@ -95,6 +96,66 @@ export function useShapeSync(): UseShapeSyncReturn {
         });
         // Rollback on error
         setShapes((prev) => prev.filter((s) => s.id !== newShape.id));
+        setError(err.message);
+        throw err;
+      }
+    },
+    []
+  );
+
+  // Create multiple shapes in batches (optimized for Firestore free tier)
+  const createShapesBatch = useCallback(
+    async (shapesData: Omit<Shape, 'id' | 'createdAt' | 'updatedAt'>[]): Promise<number> => {
+      if (shapesData.length === 0) {
+        console.warn('[createShapesBatch] No shapes to create');
+        return 0;
+      }
+
+      console.log(`[createShapesBatch] Creating ${shapesData.length} shapes in batches...`);
+
+      // Firebase batches support max 500 operations
+      const BATCH_SIZE = 500;
+      let created = 0;
+
+      try {
+        // Process shapes in batches
+        for (let i = 0; i < shapesData.length; i += BATCH_SIZE) {
+          const batch = writeBatch(db);
+          const chunk = shapesData.slice(i, i + BATCH_SIZE);
+
+          chunk.forEach((shapeData) => {
+            const shapeId = crypto.randomUUID();
+            const newShape: Shape = {
+              ...shapeData,
+              id: shapeId,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            };
+            
+            const shapeDocRef = doc(shapesCollectionRef, shapeId);
+            batch.set(shapeDocRef, newShape);
+          });
+
+        // Commit batch
+        await batch.commit();
+        created += chunk.length;
+        
+        const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+        const totalBatches = Math.ceil(shapesData.length / BATCH_SIZE);
+        console.log(`[createShapesBatch] Batch ${batchNum}/${totalBatches} committed: ${chunk.length} shapes`);
+      }
+
+      // No optimistic update needed - Firestore listener will add shapes automatically
+      // This prevents duplicate keys when the listener receives the same shapes
+
+      console.log(`[createShapesBatch] Successfully created ${created} shapes`);
+      return created;
+      } catch (err: any) {
+        console.error('[createShapesBatch] Error creating shapes:', err);
+        errorLogger.logError('Failed to create shapes in batch', err, {
+          totalShapes: shapesData.length,
+          created,
+        });
         setError(err.message);
         throw err;
       }
@@ -284,6 +345,7 @@ export function useShapeSync(): UseShapeSyncReturn {
     loading,
     error,
     createShape,
+    createShapesBatch,
     updateShape,
     deleteShape,
     lockShape,

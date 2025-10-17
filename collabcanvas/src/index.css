@@ -30,6 +30,15 @@ body {
   cursor: grabbing;
 }
 
+/* Select mode cursor - white arrow for box selection */
+.canvas-container.select-mode {
+  cursor: default !important;
+}
+
+.canvas-container.select-mode:active {
+  cursor: default !important;
+}
+
 /* Custom crosshair cursor for shape creation */
 .canvas-container.create-mode {
   cursor: crosshair !important;

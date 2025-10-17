@@ -1,0 +1,57 @@
+/* Selection Indicator Badge */
+.indicator {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  
+  background: #2d2d2d;
+  color: #ffffff;
+  border: 1px solid #3d3d3d;
+  
+  padding: 10px 20px;
+  border-radius: 8px;
+  
+  font-size: 14px;
+  font-weight: 500;
+  
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3),
+              0 2px 4px rgba(0, 0, 0, 0.2);
+  
+  animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    transform: translateX(-50%) translateY(-20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+  }
+}
+
+.count {
+  white-space: nowrap;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .indicator {
+    top: 10px;
+    padding: 8px 16px;
+    font-size: 13px;
+  }
+  
+  .indicator svg {
+    width: 14px;
+    height: 14px;
+  }
+}
+

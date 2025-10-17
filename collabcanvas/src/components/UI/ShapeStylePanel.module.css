@@ -1,0 +1,348 @@
+.panel {
+  position: fixed;
+  top: 80px;
+  right: 20px;
+  width: 280px;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+  background: rgba(30, 30, 30, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(10px);
+  z-index: 100;
+  animation: slideIn 0.2s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.header {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.subtitle {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.label {
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.8);
+  margin-bottom: 4px;
+}
+
+.colorControl {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.colorControl:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.colorInput {
+  width: 40px;
+  height: 40px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.colorInput:hover {
+  border-color: #3498db;
+  transform: scale(1.05);
+}
+
+.colorInput::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.colorInput::-webkit-color-swatch {
+  border: none;
+  border-radius: 4px;
+}
+
+.colorValue {
+  font-size: 13px;
+  font-family: 'Courier New', monospace;
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 500;
+  flex: 1;
+}
+
+.presets {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.presetButton {
+  width: 100%;
+  aspect-ratio: 1;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  padding: 0;
+}
+
+.presetButton:hover {
+  transform: scale(1.1);
+  border-color: #3498db;
+  box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);
+}
+
+.presetButton:active {
+  transform: scale(0.95);
+}
+
+/* Opacity Control */
+.opacityControl {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.opacityControl:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.opacitySlider {
+  flex: 1;
+  height: 6px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: linear-gradient(to right, 
+    rgba(255, 255, 255, 0.1), 
+    rgba(255, 255, 255, 0.9));
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+}
+
+.opacitySlider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  background: #3498db;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.opacitySlider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+  box-shadow: 0 0 8px rgba(52, 152, 219, 0.5);
+}
+
+.opacitySlider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  background: #3498db;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.opacitySlider::-moz-range-thumb:hover {
+  transform: scale(1.2);
+  box-shadow: 0 0 8px rgba(52, 152, 219, 0.5);
+}
+
+.opacityValue {
+  min-width: 45px;
+  font-size: 13px;
+  font-family: 'Courier New', monospace;
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 500;
+  text-align: right;
+}
+
+/* Divider between sections */
+.divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 8px 0;
+}
+
+/* Section Group for alignment and layer controls */
+.sectionGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sectionTitle {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+  margin: 0;
+  padding: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+/* Alignment Buttons */
+.alignmentButtons {
+  display: flex;
+  gap: 8px;
+}
+
+.iconButton {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.iconButton:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+.iconButton:active {
+  transform: translateY(0);
+}
+
+.buttonTextSmall {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.fullWidthButton {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px;
+  background: rgba(52, 152, 219, 0.15);
+  border: 1px solid rgba(52, 152, 219, 0.3);
+  border-radius: 6px;
+  color: #3498db;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.fullWidthButton:hover {
+  background: rgba(52, 152, 219, 0.25);
+  border-color: rgba(52, 152, 219, 0.5);
+  transform: translateY(-1px);
+}
+
+.fullWidthButton:active {
+  transform: translateY(0);
+}
+
+/* Layer Buttons */
+.layerButtons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.layerButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.layerButton:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+.layerButton:active {
+  transform: translateY(0);
+}
+
+.layerButton span {
+  font-size: 12px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .panel {
+    right: 10px;
+    top: 70px;
+    width: 260px;
+  }
+  
+  .presets {
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+  }
+}
+

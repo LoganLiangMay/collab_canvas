@@ -1,17 +1,42 @@
 import React from 'react';
-import { Square, Circle, Type, Minus, Trash2, Zap } from 'lucide-react';
+import { Square, Circle, Type, Minus, Trash2, MousePointer, Hand, Eraser, Undo2, Redo2, Keyboard, Download } from 'lucide-react';
 import styles from './LeftSidebar.module.css';
 
 interface LeftSidebarProps {
   onAddShape: (type: 'rectangle' | 'circle' | 'text' | 'line') => void;
   onStartDragCreate?: (type: 'rectangle' | 'circle' | 'text' | 'line') => void;
   onDeleteSelected: () => void;
+  onClearCanvas?: () => void;
   selectedShape: string | null;
-  onStressTest?: () => void;
+  selectedShapeCount?: number; // Number of selected shapes
+  cursorMode?: 'pan' | 'select';
+  onCursorModeChange?: (mode: 'pan' | 'select') => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  onShowKeyboardShortcuts?: () => void;
+  onExport?: () => void;
   fps?: number;
 }
 
-export default function LeftSidebar({ onAddShape, onStartDragCreate, onDeleteSelected, selectedShape, onStressTest, fps }: LeftSidebarProps) {
+export default function LeftSidebar({ 
+  onAddShape, 
+  onStartDragCreate, 
+  onDeleteSelected,
+  onClearCanvas,
+  selectedShape, 
+  selectedShapeCount = 0,
+  cursorMode = 'pan',
+  onCursorModeChange,
+  onUndo,
+  onRedo,
+  canUndo = false,
+  canRedo = false,
+  onShowKeyboardShortcuts,
+  onExport,
+  fps 
+}: LeftSidebarProps) {
   const isDraggingFromToolRef = React.useRef(false);
   const hasMovedRef = React.useRef(false);
   const startPosRef = React.useRef<{ x: number; y: number } | null>(null);
@@ -214,6 +239,15 @@ export default function LeftSidebar({ onAddShape, onStartDragCreate, onDeleteSel
     }
   };
 
+  const handleClearCanvas = () => {
+    if (onClearCanvas) {
+      const confirmed = window.confirm('Are you sure you want to delete ALL shapes from the canvas? This cannot be undone.');
+      if (confirmed) {
+        onClearCanvas();
+      }
+    }
+  };
+
   return (
     <div className={styles.leftSidebar}>
       <div className={styles.toolSection}>
@@ -264,6 +298,53 @@ export default function LeftSidebar({ onAddShape, onStartDragCreate, onDeleteSel
       {/* Divider */}
       <div className={styles.divider}></div>
 
+      {/* Cursor Mode Toggle Button */}
+      <button
+        className={`${styles.toolButton} ${styles.active}`}
+        onClick={() => onCursorModeChange?.(cursorMode === 'pan' ? 'select' : 'pan')}
+        aria-label={cursorMode === 'pan' ? "Switch to Select Mode" : "Switch to Pan Mode"}
+        title={cursorMode === 'pan' ? "Switch to Select Mode (Box Selection)" : "Switch to Pan Mode (Drag Canvas)"}
+      >
+        {cursorMode === 'pan' ? <Hand size={20} strokeWidth={2} /> : <MousePointer size={20} strokeWidth={2} />}
+        <span className={styles.tooltip}>
+          {cursorMode === 'pan' ? "Pan Mode (Drag Canvas)" : "Select Mode (Box Selection)"}
+        </span>
+      </button>
+
+      {/* Undo Button */}
+      {onUndo && (
+        <button
+          className={`${styles.toolButton} ${canUndo ? styles.active : styles.disabled}`}
+          onClick={onUndo}
+          disabled={!canUndo}
+          aria-label="Undo"
+          aria-disabled={!canUndo}
+          title={canUndo ? "Undo (Cmd/Ctrl+Z)" : "Nothing to undo"}
+        >
+          <Undo2 size={20} strokeWidth={2} />
+          <span className={styles.tooltip}>
+            {canUndo ? "Undo (Cmd/Ctrl+Z)" : "Nothing to undo"}
+          </span>
+        </button>
+      )}
+
+      {/* Redo Button */}
+      {onRedo && (
+        <button
+          className={`${styles.toolButton} ${canRedo ? styles.active : styles.disabled}`}
+          onClick={onRedo}
+          disabled={!canRedo}
+          aria-label="Redo"
+          aria-disabled={!canRedo}
+          title={canRedo ? "Redo (Cmd/Ctrl+Shift+Z)" : "Nothing to redo"}
+        >
+          <Redo2 size={20} strokeWidth={2} />
+          <span className={styles.tooltip}>
+            {canRedo ? "Redo (Cmd/Ctrl+Shift+Z)" : "Nothing to redo"}
+          </span>
+        </button>
+      )}
+
       {/* Delete Button - Conditionally Enabled */}
       <button
         className={`${styles.toolButton} ${selectedShape ? styles.delete : styles.disabled}`}
@@ -271,36 +352,62 @@ export default function LeftSidebar({ onAddShape, onStartDragCreate, onDeleteSel
         disabled={!selectedShape}
         aria-label="Delete Selected"
         aria-disabled={!selectedShape}
-        title={selectedShape ? "Delete Selected (Del)" : "Select a shape first"}
+        title={selectedShape ? `Delete Selected (${selectedShapeCount > 1 ? `${selectedShapeCount} shapes` : 'Del'})` : "Select a shape first"}
       >
         <Trash2 size={20} strokeWidth={2} />
         <span className={styles.tooltip}>
-          {selectedShape ? "Delete Selected (Del)" : "Select a shape first"}
+          {selectedShape ? `Delete Selected (${selectedShapeCount > 1 ? `${selectedShapeCount} shapes` : 'Del'})` : "Select a shape first"}
         </span>
       </button>
+
+      {/* Clear Canvas Button */}
+      {onClearCanvas && (
+        <button
+          className={`${styles.toolButton} ${styles.delete}`}
+          onClick={handleClearCanvas}
+          aria-label="Clear Canvas"
+          title="Clear All Shapes"
+        >
+          <Eraser size={20} strokeWidth={2} />
+          <span className={styles.tooltip}>Clear All Shapes</span>
+        </button>
+      )}
       </div>
 
-      {/* Bottom Section - Stress Test & FPS */}
+      {/* Bottom Section - Shortcuts, Stress Test & FPS */}
       <div className={styles.bottomSection}>
+        {/* Keyboard Shortcuts Button */}
+        {onShowKeyboardShortcuts && (
+          <button
+            className={`${styles.toolButton} ${styles.active}`}
+            onClick={onShowKeyboardShortcuts}
+            aria-label="Keyboard Shortcuts"
+            title="Keyboard Shortcuts (?)"
+          >
+            <Keyboard size={20} strokeWidth={2} />
+            <span className={styles.tooltip}>Keyboard Shortcuts (?)</span>
+          </button>
+        )}
+
+        {/* Export Button */}
+        {onExport && (
+          <button
+            className={`${styles.toolButton} ${styles.export}`}
+            onClick={onExport}
+            aria-label="Export Canvas"
+            title="Export as PNG/SVG"
+          >
+            <Download size={20} strokeWidth={2} />
+            <span className={styles.tooltip}>Export Canvas</span>
+          </button>
+        )}
+
         {/* FPS Counter */}
         {fps !== undefined && (
           <div className={styles.fpsCounter}>
             <span className={styles.fpsLabel}>FPS</span>
             <span className={styles.fpsValue}>{fps}</span>
           </div>
-        )}
-
-        {/* Stress Test Button - Development Only */}
-        {import.meta.env.DEV && onStressTest && (
-          <button
-            className={`${styles.toolButton} ${styles.stress}`}
-            onClick={onStressTest}
-            aria-label="Stress Test (100 shapes)"
-            title="Stress Test (100 shapes)"
-          >
-            <Zap size={20} strokeWidth={2} />
-            <span className={styles.tooltip}>Stress Test (100 shapes)</span>
-          </button>
         )}
       </div>
     </div>

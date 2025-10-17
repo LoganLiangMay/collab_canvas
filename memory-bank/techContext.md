@@ -28,10 +28,12 @@
 - **lucide-react**: 0.468.0 (icon library)
 - **CSS Modules**: Component-scoped styling
 
-### AI Integration (Optional)
-- **OpenAI**: 4.77.0 (AI command processing)
-- Environment variable: `VITE_OPENAI_API_KEY`
-- Toggle: `AI_ENABLED` flag in `services/aiService.ts`
+### AI Integration
+- **OpenAI**: 6.3.0 (GPT-4 function calling)
+- **LangChain**: 0.3.36 + @langchain/openai 0.6.16
+- Environment variable: `VITE_OPENAI_API_KEY` (required for AI features)
+- Implementation: Full function calling with 12 canvas manipulation tools
+- Status: `AI_ENABLED` flag in `services/aiService.ts`
 
 ## File Structure
 ```
@@ -57,7 +59,8 @@ collabcanvas/
 │   │   │   ├── UserPresence.tsx # Online user list
 │   │   │   └── DebugPanel.tsx   # Dev error monitoring
 │   │   └── AI/
-│   │       └── AICommandInput.tsx # AI command interface
+│   │       ├── AIChatWindow.tsx      # AI chat interface
+│   │       └── AIChatWindow.module.css
 │   ├── hooks/
 │   │   ├── useShapeSync.ts      # Firestore shape operations
 │   │   ├── useCursorSync.ts     # Realtime cursor tracking
@@ -73,16 +76,23 @@ collabcanvas/
 │   │   ├── colorUtils.ts        # Color generation + throttle
 │   │   └── errorLogger.ts       # Error tracking system
 │   ├── services/
-│   │   ├── aiService.ts         # OpenAI integration
-│   │   └── aiCommandParser.ts   # AI command parsing
+│   │   ├── aiService.ts         # OpenAI GPT-4 function calling
+│   │   ├── aiTools.ts           # Function calling schema (12 tools)
+│   │   └── aiExecutor.ts        # Command execution engine
 │   ├── firebase.ts              # Firebase initialization
 │   ├── App.tsx                  # Root component
 │   ├── main.tsx                 # React entry point
 │   └── index.css                # Global styles
 ├── public/
 ├── dist/                        # Production build output
-├── memory-bank/                 # 🆕 Project documentation
+├── memory-bank/                 # Project documentation
+├── docs/                        # 🆕 PRDs and bug tracking
+│   ├── PRDs/
+│   │   └── ai-agent-prd.md      # AI Canvas Agent documentation
+│   └── bugs/
+│       └── README.md            # Bug tracking template
 ├── .env.local                   # Local environment variables
+├── .env.example                 # 🆕 Environment variable template
 ├── firebase.json                # Firebase config
 ├── firestore.rules              # Firestore security rules
 ├── database.rules.json          # Realtime DB security rules

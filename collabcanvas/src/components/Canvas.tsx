@@ -1,11 +1,13 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Stage, Layer, Line as KonvaLine } from 'react-konva';
+import { Stage, Layer, Line as KonvaLine, Transformer, Group, Rect, Text } from 'react-konva';
 import type Konva from 'konva';
 import { useAuth } from '../contexts/AuthContext';
 import { useShapeSync } from '../hooks/useShapeSync';
 import { useCursorSync } from '../hooks/useCursorSync';
 import { usePresence } from '../hooks/usePresence';
+import { useHistory } from '../hooks/useHistory';
 import { getUserCursorColor } from '../utils/colorUtils';
+import { snapLineDelta } from '../utils/canvasHelpers';
 import Rectangle from './Rectangle';
 import Circle from './Circle';
 import TextBox from './TextBox';
@@ -14,18 +16,48 @@ import Cursor from './Cursor';
 import LeftSidebar from './LeftSidebar';
 import UserMenu from './UI/UserMenu';
 import Toast from './UI/Toast';
-import AICommandInput from './AI/AICommandInput';
+import AIChatWindow from './AI/AIChatWindow';
+import { BulkConfirmationModal } from './AI/BulkConfirmationModal';
+import ShapeStylePanel from './UI/ShapeStylePanel';
+import KeyboardShortcuts from './UI/KeyboardShortcuts';
+import SelectionIndicator from './UI/SelectionIndicator';
+import ContextMenu from './UI/ContextMenu';
+import ExportModal from './UI/ExportModal';
 import { errorLogger } from '../utils/errorLogger';
-import { executeAICommand, AI_ENABLED } from '../services/aiService';
-import { getRandomColor } from '../utils/colorUtils';
+import { processAICommand, AI_ENABLED, type AIChatMessage } from '../services/aiService';
+import type { CanvasOperations } from '../services/aiExecutor';
+import type { Shape } from '../types/shape.types';
 
 export default function Canvas() {
   const { user } = useAuth();
-  const { shapes, loading, error, createShape: createShapeFirestore, updateShape, deleteShape: deleteShapeFirestore, lockShape } = useShapeSync();
+  const { shapes, loading, error, createShape: createShapeFirestore, createShapesBatch, updateShape: updateShapeFirestore, deleteShape: deleteShapeFirestore, lockShape } = useShapeSync();
+  const { canUndo, canRedo, undo, redo, recordCreate, recordUpdate, recordDelete } = useHistory();
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
   const [stageScale, setStageScale] = useState(1);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]); // Support multiple selections
+  const [cursorMode, setCursorMode] = useState<'pan' | 'select'>('pan'); // Pan or select mode
+  const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null); // Box selection
   const stageRef = useRef<Konva.Stage>(null);
+  const transformerRef = useRef<Konva.Transformer>(null);
+  const shapeRefs = useRef<Map<string, Konva.Node>>(new Map());
+  const isProcessingTransformEnd = useRef(false); // Prevent recursive transform end calls
+  
+  // Track live position/size during drag/transform for dimension badge
+  const [liveShapeProps, setLiveShapeProps] = useState<{ id: string; x: number; y: number; width: number; height: number; rotation: number } | null>(null);
+  
+  // Track box selection drag
+  const boxSelectionStart = useRef<{ x: number; y: number } | null>(null);
+  const justCompletedBoxSelection = useRef(false);
+  
+  // Backward compatibility: selectedId for components that expect single selection
+  const selectedId = selectedIds.length === 1 ? selectedIds[0] : (selectedIds.length > 0 ? selectedIds[0] : null);
+  const setSelectedId = (id: string | null) => {
+    if (id === null) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds([id]);
+    }
+  };
   
   // Shape creation state
   const [isPlacementMode, setIsPlacementMode] = useState(false);
@@ -50,6 +82,23 @@ export default function Canvas() {
 
   // AI command processing state
   const [isProcessingAI, setIsProcessingAI] = useState(false);
+  const [conversationHistory, setConversationHistory] = useState<AIChatMessage[]>([]);
+
+  // Bulk creation confirmation modal state
+  const [bulkConfirmation, setBulkConfirmation] = useState<{
+    count: number;
+    command: string;
+  } | null>(null);
+
+  // Keyboard shortcuts modal state
+  const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+
+  // Context menu (right-click) state
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; shapeId: string } | null>(null);
+
+  // Clipboard state for copy/paste
+  const [clipboard, setClipboard] = useState<Shape[]>([]);
 
   // Cursor sync for multiplayer
   const userColor = user ? getUserCursorColor(user.uid) : '#000000';
@@ -179,45 +228,124 @@ export default function Canvas() {
     });
   };
 
+  // ===== HISTORY-AWARE SHAPE OPERATIONS =====
+  // Wrapper functions that record history and then call Firestore operations
+
+  const createShape = useCallback(async (shapeData: Omit<Shape, 'id' | 'createdAt' | 'updatedAt'>) => {
+    // Create shape in Firestore (which returns the full shape via optimistic update)
+    await createShapeFirestore(shapeData);
+    
+    // Find the newly created shape in the shapes array (it will have been added optimistically)
+    // We need to wait a tiny bit for the optimistic update to reflect in shapes
+    setTimeout(() => {
+      const newShape = shapes.find(s => 
+        s.x === shapeData.x && 
+        s.y === shapeData.y && 
+        s.type === shapeData.type &&
+        s.userId === shapeData.userId
+      );
+      if (newShape) {
+        recordCreate(newShape);
+      }
+    }, 50);
+  }, [createShapeFirestore, shapes, recordCreate]);
+
+  const updateShape = useCallback(async (id: string, updates: Partial<Shape>) => {
+    // Find the shape before update
+    const beforeShape = shapes.find(s => s.id === id);
+    if (!beforeShape) {
+      console.warn(`[updateShape] Shape ${id} not found for history recording`);
+      await updateShapeFirestore(id, updates);
+      return;
+    }
+
+    // Update shape in Firestore
+    await updateShapeFirestore(id, updates);
+
+    // Record history with before and after states
+    const afterShape = { ...beforeShape, ...updates, updatedAt: Date.now() };
+    recordUpdate(beforeShape, afterShape);
+  }, [shapes, updateShapeFirestore, recordUpdate]);
+
+  const deleteShape = useCallback(async (id: string) => {
+    // Find the shape before deletion
+    const shapeToDelete = shapes.find(s => s.id === id);
+    if (!shapeToDelete) {
+      console.warn(`[deleteShape] Shape ${id} not found for history recording`);
+      await deleteShapeFirestore(id);
+      return;
+    }
+
+    // Record deletion before actually deleting
+    recordDelete(shapeToDelete);
+
+    // Delete shape from Firestore
+    await deleteShapeFirestore(id);
+  }, [shapes, deleteShapeFirestore, recordDelete]);
+
+  // Undo the last operation
+  const handleUndo = useCallback(async () => {
+    if (!canUndo) return;
+
+    const entry = undo();
+    if (!entry) return;
+
+    console.log('[UNDO] Undoing operation:', entry.type, entry.shapeId);
+
+    try {
+      if (entry.type === 'create') {
+        // Undo create = delete the shape
+        await deleteShapeFirestore(entry.shapeId);
+      } else if (entry.type === 'update') {
+        // Undo update = restore previous state
+        if (entry.before) {
+          await updateShapeFirestore(entry.shapeId, entry.before);
+        }
+      } else if (entry.type === 'delete') {
+        // Undo delete = recreate the shape
+        if (entry.before) {
+          await createShapeFirestore(entry.before);
+        }
+      }
+    } catch (err: any) {
+      console.error('[UNDO] Error:', err);
+    }
+  }, [canUndo, undo, createShapeFirestore, updateShapeFirestore, deleteShapeFirestore]);
+
+  // Redo the last undone operation
+  const handleRedo = useCallback(async () => {
+    if (!canRedo) return;
+
+    const entry = redo();
+    if (!entry) return;
+
+    console.log('[REDO] Redoing operation:', entry.type, entry.shapeId);
+
+    try {
+      if (entry.type === 'create') {
+        // Redo create = recreate the shape
+        if (entry.after) {
+          await createShapeFirestore(entry.after);
+        }
+      } else if (entry.type === 'update') {
+        // Redo update = apply the new state
+        if (entry.after) {
+          await updateShapeFirestore(entry.shapeId, entry.after);
+        }
+      } else if (entry.type === 'delete') {
+        // Redo delete = delete the shape again
+        await deleteShapeFirestore(entry.shapeId);
+      }
+    } catch (err: any) {
+      console.error('[REDO] Error:', err);
+    }
+  }, [canRedo, redo, createShapeFirestore, updateShapeFirestore, deleteShapeFirestore]);
+
+  // ===== END HISTORY-AWARE OPERATIONS =====
+
   // Shape management functions
   // Note: Legacy createShape function - shape creation is now handled
   // directly in drag-create and click-create handlers
-
-  // Stress test - Create 100 shapes for performance testing (DEV only)
-  const handleStressTest = async () => {
-    if (!user || !import.meta.env.DEV) return;
-    
-    console.log('[STRESS TEST] Creating 100 shapes...');
-    const colors = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c'];
-    
-    // Create shapes in batches to avoid overwhelming Firebase
-    for (let i = 0; i < 100; i++) {
-      const randomX = Math.random() * 2000 - 1000; // Random position
-      const randomY = Math.random() * 2000 - 1000;
-      const randomColor = colors[Math.floor(Math.random() * colors.length)];
-      
-      try {
-        await createShapeFirestore({
-          type: 'rectangle',
-          x: randomX,
-          y: randomY,
-          width: 150,
-          height: 100,
-          fill: randomColor,
-          userId: user.uid,
-        });
-      } catch (err) {
-        console.error(`[STRESS TEST] Error creating shape ${i}:`, err);
-      }
-      
-      // Small delay between creates to avoid rate limiting
-      if (i % 10 === 0) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-    }
-    
-    console.log('[STRESS TEST] Finished creating 100 shapes');
-  };
 
   // Handle shape drag start (lock the shape)
   const handleShapeDragStart = async (id: string) => {
@@ -232,11 +360,36 @@ export default function Canvas() {
     
     setIsDraggingShape(true); // Also update state for React re-render
     
+    // Initialize live tracking with current position
+    const shape = shapes.find(s => s.id === id);
+    if (shape) {
+      setLiveShapeProps({
+        id: shape.id,
+        x: shape.x,
+        y: shape.y,
+        width: shape.width,
+        height: shape.height,
+        rotation: shape.rotation || 0,
+      });
+    }
+    
     try {
       await lockShape(id, user.uid);
     } catch (err: any) {
       console.error('[handleShapeDragStart] Error locking shape:', err);
       errorLogger.logError('Failed to lock shape', err, { shapeId: id, userId: user.uid });
+    }
+  };
+
+  // Handle shape drag move (update live position for dimension badge)
+  const handleShapeDragMove = (id: string, x: number, y: number) => {
+    const shape = shapes.find(s => s.id === id);
+    if (shape && liveShapeProps && liveShapeProps.id === id) {
+      setLiveShapeProps({
+        ...liveShapeProps,
+        x,
+        y,
+      });
     }
   };
 
@@ -251,6 +404,7 @@ export default function Canvas() {
     }
     
     setIsDraggingShape(false); // Also update state for React re-render
+    setLiveShapeProps(null); // Clear live tracking
     
     // Check if shape still exists before trying to update
     const shapeExists = shapes.find(s => s.id === id);
@@ -281,13 +435,370 @@ export default function Canvas() {
     }
   };
 
-  const selectShape = (id: string) => {
-    setSelectedId(id);
+  // Handle line endpoint dragging (Figma-style)
+  const handleLineEndpointDrag = async (id: string, newWidth: number, newHeight: number, newX: number, newY: number) => {
+    console.log(`[handleLineEndpointDrag] Line ${id}: dimensions (${newWidth.toFixed(1)}, ${newHeight.toFixed(1)}), position (${newX.toFixed(1)}, ${newY.toFixed(1)})`);
+    
+    try {
+      // Update line dimensions and position in real-time
+      await updateShape(id, {
+        x: newX,
+        y: newY,
+        width: newWidth,
+        height: newHeight,
+        rotation: 0, // Always reset rotation when using endpoint editing
+      });
+    } catch (err: any) {
+      console.error('[handleLineEndpointDrag] Error updating line endpoints:', err);
+      errorLogger.logError('Failed to update line endpoints', err, {
+        shapeId: id,
+        newWidth,
+        newHeight,
+        newX,
+        newY,
+      });
+    }
+  };
+
+  // Handle transform end (resize/rotate) - sync to Firestore
+  // Handle transform (resize/rotate) start
+  const handleTransformStart = useCallback((e: Konva.KonvaEventObject<Event>) => {
+    const node = e.target;
+    const id = node.id();
+    if (!id) return;
+
+    const shape = shapes.find(s => s.id === id);
+    if (shape) {
+      setLiveShapeProps({
+        id: shape.id,
+        x: shape.x,
+        y: shape.y,
+        width: shape.width,
+        height: shape.height,
+        rotation: shape.rotation || 0,
+      });
+    }
+  }, [shapes]);
+
+  // Handle transform move (update live dimensions for badge)
+  const handleTransform = useCallback((e: Konva.KonvaEventObject<Event>) => {
+    const node = e.target;
+    const id = node.id();
+    if (!id || !liveShapeProps || liveShapeProps.id !== id) return;
+
+    const shape = shapes.find(s => s.id === id);
+    
+    // For lines: apply real-time rotation snapping for visual feedback
+    if (shape && shape.type === 'line') {
+      let rotation = node.rotation();
+      
+      // Normalize rotation to 0-360 range
+      let normalizedRotation = rotation % 360;
+      if (normalizedRotation < 0) normalizedRotation += 360;
+      
+      console.log(`[handleTransform] Line rotation: ${rotation.toFixed(1)}° (normalized: ${normalizedRotation.toFixed(1)}°)`);
+      
+      // Check if within 5° of cardinal directions (more forgiving during transform)
+      const cardinals = [0, 90, 180, 270];
+      const tolerance = 5; // Wider tolerance during transform for better UX
+      
+      for (const cardinal of cardinals) {
+        const diff = Math.abs(normalizedRotation - cardinal);
+        if (diff <= tolerance || diff >= (360 - tolerance)) {
+          const snappedRotation = cardinal % 360;
+          node.rotation(snappedRotation);
+          rotation = snappedRotation;
+          console.log(`[handleTransform] ✅ SNAPPED: ${normalizedRotation.toFixed(1)}° → ${snappedRotation}°`);
+          break;
+        }
+      }
+    }
+
+    // Calculate live dimensions including scale
+    const scaleX = node.scaleX();
+    const scaleY = node.scaleY();
+    const width = node.width() * Math.abs(scaleX);
+    const height = node.height() * Math.abs(scaleY);
+
+    // Update live props for dimension badge
+    setLiveShapeProps({
+      id: liveShapeProps.id,
+      x: node.x(),
+      y: node.y(),
+      width: Math.max(20, width),
+      height: Math.max(20, height),
+      rotation: node.rotation(),
+    });
+
+    // Force layer redraw to eliminate visual lag
+    node.getLayer()?.batchDraw();
+  }, [liveShapeProps, shapes]);
+
+  const handleTransformEnd = useCallback(async (e: Konva.KonvaEventObject<Event>) => {
+    // Prevent recursive calls from Transformer updates
+    if (isProcessingTransformEnd.current) {
+      console.log('[handleTransformEnd] Skipping recursive call');
+      return;
+    }
+    isProcessingTransformEnd.current = true;
+
+    // CRITICAL: Re-enable Stage dragging immediately after transform ends
+    if (stageRef.current) {
+      stageRef.current.draggable(true);
+      console.log(`[handleTransformEnd] 🔓 Stage dragging RE-ENABLED`);
+    }
+
+    const node = e.target;
+    const id = node.id();
+    
+    if (!id || !user) {
+      isProcessingTransformEnd.current = false;
+      return;
+    }
+
+    const shape = shapes.find(s => s.id === id);
+    if (!shape) {
+      console.warn(`[handleTransformEnd] Shape ${id} not found`);
+      setLiveShapeProps(null); // Clear live tracking
+      isProcessingTransformEnd.current = false;
+      return;
+    }
+
+    // Get the transform attributes
+    const scaleX = node.scaleX();
+    const scaleY = node.scaleY();
+    let rotation = node.rotation();
+
+    // For lines: apply rotation snapping to cardinal directions
+    // When snapping, recalculate width/height to represent the snapped direction directly
+    let snappedLineWidth = null;
+    let snappedLineHeight = null;
+    if (shape.type === 'line') {
+      // Normalize rotation to 0-360 range
+      let normalizedRotation = rotation % 360;
+      if (normalizedRotation < 0) normalizedRotation += 360;
+      
+      // Check if within 5° of cardinal directions
+      const cardinals = [0, 90, 180, 270];
+      const tolerance = 5; // Matches real-time snapping tolerance
+      
+      for (const cardinal of cardinals) {
+        const diff = Math.abs(normalizedRotation - cardinal);
+        if (diff <= tolerance || diff >= (360 - tolerance)) {
+          // Get the current line length
+          const currentLength = Math.sqrt(shape.width * shape.width + shape.height * shape.height);
+          
+          // Recalculate width/height deltas based on snapped direction
+          // Reset rotation to 0 and encode direction in the deltas
+          const snappedRotation = cardinal % 360;
+          const radians = (snappedRotation * Math.PI) / 180;
+          
+          // Calculate new deltas based on snapped angle
+          snappedLineWidth = Math.cos(radians) * currentLength;
+          snappedLineHeight = Math.sin(radians) * currentLength;
+          
+          // For cardinal directions, enforce exact 0 or full length
+          if (snappedRotation === 0) {
+            snappedLineWidth = currentLength;
+            snappedLineHeight = 0;
+          } else if (snappedRotation === 90) {
+            snappedLineWidth = 0;
+            snappedLineHeight = currentLength;
+          } else if (snappedRotation === 180) {
+            snappedLineWidth = -currentLength;
+            snappedLineHeight = 0;
+          } else if (snappedRotation === 270) {
+            snappedLineWidth = 0;
+            snappedLineHeight = -currentLength;
+          }
+          
+          // Reset rotation to 0 since direction is now encoded in deltas
+          rotation = 0;
+          node.rotation(0);
+          
+          console.log(`[handleTransformEnd] Line snapped: ${normalizedRotation.toFixed(1)}° → ${snappedRotation}°, dimensions: ${Math.abs(Math.round(snappedLineWidth))} × ${Math.abs(Math.round(snappedLineHeight))}`);
+          break;
+        }
+      }
+    }
+
+    // Calculate the actual dimensions after transformation
+    const transformedWidth = node.width() * scaleX;
+    const transformedHeight = node.height() * scaleY;
+    
+    const MIN_SIZE = 20;
+
+    // Check if dimensions actually changed (not just rotation)
+    // Use a small threshold (0.5px) to catch even tiny resizes, especially when expanding from minimum size
+    const dimensionsChanged = Math.abs(transformedWidth - shape.width) > 0.5 || Math.abs(transformedHeight - shape.height) > 0.5;
+    
+    // Special case: if trying to shrink when already at minimum, don't treat as resize
+    // Only flag as shrinking below minimum if BOTH dimensions are at/below minimum AND getting smaller
+    const currentAtMinimum = shape.width <= MIN_SIZE && shape.height <= MIN_SIZE;
+    const transformedAtMinimum = transformedWidth <= MIN_SIZE && transformedHeight <= MIN_SIZE;
+    const isGettingSmaller = transformedWidth < shape.width || transformedHeight < shape.height;
+    const isShrinkingBelowMinimum = currentAtMinimum && transformedAtMinimum && isGettingSmaller;
+    
+    const wasResized = dimensionsChanged && !isShrinkingBelowMinimum;
+    
+    let newWidth = shape.width;
+    let newHeight = shape.height;
+
+    if (wasResized) {
+      // Apply minimum size of 20px to prevent tiny shapes
+      newWidth = Math.max(MIN_SIZE, transformedWidth);
+      newHeight = Math.max(MIN_SIZE, transformedHeight);
+
+      console.log(`[handleTransformEnd] Shape ${id} resized: ${Math.round(newWidth)}x${Math.round(newHeight)}, rotation: ${Math.round(rotation)}°`);
+      console.log(`  ↳ Transform: ${shape.width.toFixed(1)}x${shape.height.toFixed(1)} → ${transformedWidth.toFixed(1)}x${transformedHeight.toFixed(1)}`);
+      console.log(`  ↳ Scale: ${scaleX.toFixed(3)}x${scaleY.toFixed(3)}, node: ${node.width()}x${node.height()}`);
+    } else {
+      // Just rotating or negligible size change, keep original dimensions
+      if (dimensionsChanged) {
+        console.log(`[handleTransformEnd] Shape ${id} - resize ignored (shrinking below minimum)`, {
+          current: `${shape.width}x${shape.height}`,
+          transformed: `${transformedWidth.toFixed(1)}x${transformedHeight.toFixed(1)}`,
+          currentAtMinimum,
+          transformedAtMinimum,
+          isGettingSmaller,
+          isShrinkingBelowMinimum
+        });
+      } else {
+        console.log(`[handleTransformEnd] Shape ${id} rotated: ${Math.round(rotation)}°`);
+      }
+    }
+    
+    // For lines that snapped to cardinal directions, use the recalculated dimensions
+    if (snappedLineWidth !== null && snappedLineHeight !== null) {
+      newWidth = snappedLineWidth;
+      newHeight = snappedLineHeight;
+      console.log(`[handleTransformEnd] Applying snapped line dimensions: ${Math.abs(Math.round(newWidth))} × ${Math.abs(Math.round(newHeight))}`);
+    }
+    
+    // Always reset scale to 1 and apply dimensions to node (prevents visual jumps)
+    node.scaleX(1);
+    node.scaleY(1);
+    
+    // For lines, the Group needs absolute dimensions for proper bounding box
+    if (shape.type === 'line') {
+      node.width(Math.abs(newWidth));
+      node.height(Math.abs(newHeight));
+    } else {
+    node.width(newWidth);
+    node.height(newHeight);
+    }
+
+    // Force Transformer to immediately update by triggering a clean reattachment
+    // Temporarily clear and reset selectedId to trigger the useEffect that attaches the transformer
+    const currentSelectedId = selectedId;
+    setSelectedId(null);
+    // Use setTimeout with 0 to let React process the null state before resetting
+    setTimeout(() => {
+      setSelectedId(currentSelectedId);
+      isProcessingTransformEnd.current = false; // Reset flag after reattachment
+    }, 0);
+
+    try {
+      // Update shape with new dimensions and rotation
+      await updateShape(id, {
+        x: node.x(),
+        y: node.y(),
+        width: newWidth,
+        height: newHeight,
+        rotation: rotation,
+      });
+
+      // Resize notification removed per user request
+      // if (wasResized) {
+      //   showToast(`Resized to ${Math.round(newWidth)}×${Math.round(newHeight)}`, 'success');
+      // }
+    } catch (err: any) {
+      console.error('[handleTransformEnd] Error updating shape:', err);
+      errorLogger.logError('Failed to update shape transformation', err, {
+        shapeId: id,
+        newWidth,
+        newHeight,
+        rotation,
+      });
+      showToast('Failed to update shape', 'error');
+    } finally {
+      setLiveShapeProps(null); // Clear live tracking
+      // Note: isProcessingTransformEnd flag is reset in setTimeout after reattachment
+    }
+  }, [user, shapes, updateShape, showToast, selectedId]);
+
+  const selectShape = (id: string, multiSelect: boolean = false) => {
+    if (multiSelect) {
+      // Shift-click: toggle selection
+      setSelectedIds(prev => {
+        if (prev.includes(id)) {
+          // Remove from selection
+          return prev.filter(selectedId => selectedId !== id);
+        } else {
+          // Add to selection
+          return [...prev, id];
+        }
+      });
+    } else {
+      // Regular click: single selection
+      setSelectedIds([id]);
+    }
   };
 
   const deselectShape = () => {
-    setSelectedId(null);
+    setSelectedIds([]);
   };
+  
+  const selectMultipleShapes = (ids: string[]) => {
+    setSelectedIds(ids);
+  };
+
+  // Attach transformer to selected shape(s)
+  useEffect(() => {
+    const transformer = transformerRef.current;
+    if (!transformer) {
+      console.log('[Transformer Attach] No transformer ref');
+      return;
+    }
+
+    if (selectedIds.length > 0) {
+      console.log(`[Transformer Attach] Attaching to ${selectedIds.length} shape(s):`, selectedIds);
+      
+      // Get nodes for all selected shapes
+      const nodes = selectedIds
+        .map(id => {
+          const node = shapeRefs.current.get(id);
+          if (!node) {
+            console.warn(`[Transformer Attach] Node not found for shape ${id}`);
+          }
+          return node;
+        })
+        .filter((node): node is Konva.Node => node !== undefined);
+      
+      console.log(`[Transformer Attach] Found ${nodes.length} valid nodes`);
+      
+      if (nodes.length > 0) {
+        transformer.nodes(nodes);
+        transformer.getLayer()?.batchDraw();
+        console.log('[Transformer Attach] Transformer attached and layer redrawn');
+      } else {
+        console.warn('[Transformer Attach] No valid nodes found for selected shapes');
+      }
+    } else {
+      console.log('[Transformer Attach] No shapes selected, clearing transformer');
+      transformer.nodes([]);
+      transformer.getLayer()?.batchDraw();
+      
+      // Force cursor reset when deselecting - clear any inline cursor styles set by Konva
+      if (stageRef.current) {
+        const container = stageRef.current.container();
+        if (container) {
+          container.style.cursor = '';
+          console.log('[Transformer Attach] Cursor style cleared on deselect');
+        }
+      }
+    }
+  }, [selectedIds]);
 
   // Handle starting text edit
   const handleStartTextEdit = useCallback((id: string) => {
@@ -343,6 +854,568 @@ export default function Canvas() {
     setEditingText('');
   }, []);
 
+  // Handle color change for selected shape(s)
+  const handleColorChange = useCallback(async (color: string) => {
+    if (selectedIds.length === 0) return;
+    
+    console.log(`[handleColorChange] Changing fill color of ${selectedIds.length} shape(s) to ${color}`);
+    
+    // Apply color to ALL selected shapes
+    try {
+      await Promise.all(
+        selectedIds.map(id => updateShape(id, { fill: color }))
+      );
+    } catch (err) {
+      console.error(`[handleColorChange] Error updating shape color:`, err);
+    }
+  }, [selectedIds, updateShape]);
+
+  // Handle stroke color change for lines (apply to all selected)
+  const handleStrokeColorChange = useCallback(async (color: string) => {
+    if (selectedIds.length === 0) return;
+    
+    console.log(`[handleStrokeColorChange] Changing stroke color of ${selectedIds.length} shape(s) to ${color}`);
+    
+    // Apply stroke color to ALL selected shapes
+    try {
+      await Promise.all(
+        selectedIds.map(id => updateShape(id, { stroke: color }))
+      );
+    } catch (err) {
+      console.error(`[handleStrokeColorChange] Error updating stroke color:`, err);
+    }
+  }, [selectedIds, updateShape]);
+
+  // Handle text color change for text boxes (apply to all selected)
+  const handleTextColorChange = useCallback(async (color: string) => {
+    if (selectedIds.length === 0) return;
+    
+    console.log(`[handleTextColorChange] Changing text color of ${selectedIds.length} shape(s) to ${color}`);
+    
+    // Apply text color to ALL selected shapes
+    try {
+      await Promise.all(
+        selectedIds.map(id => updateShape(id, { textColor: color }))
+      );
+    } catch (err) {
+      console.error(`[handleTextColorChange] Error updating text color:`, err);
+    }
+  }, [selectedIds, updateShape]);
+
+  // Handle opacity change (apply to all selected)
+  const handleOpacityChange = useCallback(async (opacity: number) => {
+    if (selectedIds.length === 0) return;
+    
+    console.log(`[handleOpacityChange] Changing opacity of ${selectedIds.length} shape(s) to ${opacity}`);
+    
+    // Apply opacity to ALL selected shapes
+    try {
+      await Promise.all(
+        selectedIds.map(id => updateShape(id, { opacity }))
+      );
+    } catch (err) {
+      console.error(`[handleOpacityChange] Error updating opacity:`, err);
+    }
+  }, [selectedIds, updateShape]);
+
+  // ===== ALIGNMENT TOOLS =====
+  
+  // Align shapes
+  const handleAlign = useCallback(async (type: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => {
+    if (selectedIds.length < 2) return;
+
+    const selectedShapes = shapes.filter(s => selectedIds.includes(s.id));
+    if (selectedShapes.length < 2) return;
+
+    console.log(`[Align] Aligning ${selectedShapes.length} shapes: ${type}`);
+
+    try {
+      if (type === 'left') {
+        // Find leftmost x position
+        const minX = Math.min(...selectedShapes.map(s => s.x));
+        await Promise.all(
+          selectedShapes.map(s => updateShape(s.id, { x: minX }))
+        );
+      } else if (type === 'center') {
+        // Find average center x position
+        const centers = selectedShapes.map(s => s.x + s.width / 2);
+        const avgCenter = centers.reduce((sum, c) => sum + c, 0) / centers.length;
+        await Promise.all(
+          selectedShapes.map(s => updateShape(s.id, { x: avgCenter - s.width / 2 }))
+        );
+      } else if (type === 'right') {
+        // Find rightmost position
+        const maxRight = Math.max(...selectedShapes.map(s => s.x + s.width));
+        await Promise.all(
+          selectedShapes.map(s => updateShape(s.id, { x: maxRight - s.width }))
+        );
+      } else if (type === 'top') {
+        // Find topmost y position
+        const minY = Math.min(...selectedShapes.map(s => s.y));
+        await Promise.all(
+          selectedShapes.map(s => updateShape(s.id, { y: minY }))
+        );
+      } else if (type === 'middle') {
+        // Find average center y position
+        const centers = selectedShapes.map(s => s.y + s.height / 2);
+        const avgCenter = centers.reduce((sum, c) => sum + c, 0) / centers.length;
+        await Promise.all(
+          selectedShapes.map(s => updateShape(s.id, { y: avgCenter - s.height / 2 }))
+        );
+      } else if (type === 'bottom') {
+        // Find bottommost position
+        const maxBottom = Math.max(...selectedShapes.map(s => s.y + s.height));
+        await Promise.all(
+          selectedShapes.map(s => updateShape(s.id, { y: maxBottom - s.height }))
+        );
+      }
+    } catch (err) {
+      console.error('[Align] Error:', err);
+    }
+  }, [selectedIds, shapes, updateShape]);
+
+  // Distribute shapes evenly
+  const handleDistribute = useCallback(async (direction: 'horizontal' | 'vertical') => {
+    if (selectedIds.length < 3) return; // Need at least 3 shapes to distribute
+
+    const selectedShapes = shapes.filter(s => selectedIds.includes(s.id));
+    if (selectedShapes.length < 3) return;
+
+    console.log(`[Distribute] Distributing ${selectedShapes.length} shapes: ${direction}`);
+
+    try {
+      if (direction === 'horizontal') {
+        // Sort by x position (left edge)
+        const sorted = [...selectedShapes].sort((a, b) => a.x - b.x);
+        
+        const first = sorted[0];
+        const last = sorted[sorted.length - 1];
+        
+        // Calculate total available space for gaps
+        const firstRightEdge = first.x + first.width;
+        const lastLeftEdge = last.x;
+        const totalSpaceForGaps = lastLeftEdge - firstRightEdge;
+        
+        // Calculate total width of middle shapes
+        let totalMiddleWidth = 0;
+        for (let i = 1; i < sorted.length - 1; i++) {
+          totalMiddleWidth += sorted[i].width;
+        }
+        
+        // Calculate equal gap size
+        const gapSize = (totalSpaceForGaps - totalMiddleWidth) / (sorted.length - 1);
+        
+        // Position middle shapes with equal gaps
+        let currentX = firstRightEdge + gapSize;
+        for (let i = 1; i < sorted.length - 1; i++) {
+          await updateShape(sorted[i].id, { x: currentX });
+          currentX += sorted[i].width + gapSize;
+        }
+      } else {
+        // Sort by y position (top edge)
+        const sorted = [...selectedShapes].sort((a, b) => a.y - b.y);
+        
+        const first = sorted[0];
+        const last = sorted[sorted.length - 1];
+        
+        // Calculate total available space for gaps
+        const firstBottomEdge = first.y + first.height;
+        const lastTopEdge = last.y;
+        const totalSpaceForGaps = lastTopEdge - firstBottomEdge;
+        
+        // Calculate total height of middle shapes
+        let totalMiddleHeight = 0;
+        for (let i = 1; i < sorted.length - 1; i++) {
+          totalMiddleHeight += sorted[i].height;
+        }
+        
+        // Calculate equal gap size
+        const gapSize = (totalSpaceForGaps - totalMiddleHeight) / (sorted.length - 1);
+        
+        // Position middle shapes with equal gaps
+        let currentY = firstBottomEdge + gapSize;
+        for (let i = 1; i < sorted.length - 1; i++) {
+          await updateShape(sorted[i].id, { y: currentY });
+          currentY += sorted[i].height + gapSize;
+        }
+      }
+    } catch (err) {
+      console.error('[Distribute] Error:', err);
+    }
+  }, [selectedIds, shapes, updateShape]);
+
+  // Center shapes on canvas
+  const handleCenterOnCanvas = useCallback(async () => {
+    if (selectedIds.length === 0) return;
+
+    const selectedShapes = shapes.filter(s => selectedIds.includes(s.id));
+    if (selectedShapes.length === 0) return;
+
+    console.log(`[Center] Centering ${selectedShapes.length} shapes on canvas`);
+
+    try {
+      // Calculate bounding box of all selected shapes
+      const minX = Math.min(...selectedShapes.map(s => s.x));
+      const minY = Math.min(...selectedShapes.map(s => s.y));
+      const maxX = Math.max(...selectedShapes.map(s => s.x + s.width));
+      const maxY = Math.max(...selectedShapes.map(s => s.y + s.height));
+      
+      const groupWidth = maxX - minX;
+      const groupHeight = maxY - minY;
+      
+      // Calculate canvas center (viewport center)
+      const canvasCenterX = dimensions.width / 2;
+      const canvasCenterY = dimensions.height / 2;
+      
+      // Calculate offset to center the group
+      const offsetX = canvasCenterX - (minX + groupWidth / 2);
+      const offsetY = canvasCenterY - (minY + groupHeight / 2);
+      
+      // Apply offset to all shapes
+      await Promise.all(
+        selectedShapes.map(s => updateShape(s.id, { 
+          x: s.x + offsetX, 
+          y: s.y + offsetY 
+        }))
+      );
+    } catch (err) {
+      console.error('[Center] Error:', err);
+    }
+  }, [selectedIds, shapes, dimensions, updateShape]);
+
+  // ===== END ALIGNMENT TOOLS =====
+
+  // ===== LAYER OPERATIONS =====
+
+  // Get max z-index
+  const getMaxZIndex = useCallback(() => {
+    if (shapes.length === 0) return 0;
+    return Math.max(...shapes.map(s => s.zIndex || 0));
+  }, [shapes]);
+
+  // Get min z-index
+  const getMinZIndex = useCallback(() => {
+    if (shapes.length === 0) return 0;
+    return Math.min(...shapes.map(s => s.zIndex || 0));
+  }, [shapes]);
+
+  // Bring to front
+  const handleBringToFront = useCallback(async () => {
+    if (selectedIds.length === 0) return;
+
+    const selectedShapes = shapes.filter(s => selectedIds.includes(s.id));
+    if (selectedShapes.length === 0) return;
+
+    console.log(`[Layer] Bringing ${selectedShapes.length} shape(s) to front`);
+
+    try {
+      const maxZ = getMaxZIndex();
+      // Set all selected shapes to be above the current max
+      await Promise.all(
+        selectedShapes.map((s, index) => updateShape(s.id, { zIndex: maxZ + index + 1 }))
+      );
+    } catch (err) {
+      console.error('[Layer] Error bringing to front:', err);
+    }
+  }, [selectedIds, shapes, getMaxZIndex, updateShape]);
+
+  // Send to back
+  const handleSendToBack = useCallback(async () => {
+    if (selectedIds.length === 0) return;
+
+    const selectedShapes = shapes.filter(s => selectedIds.includes(s.id));
+    if (selectedShapes.length === 0) return;
+
+    console.log(`[Layer] Sending ${selectedShapes.length} shape(s) to back`);
+
+    try {
+      const minZ = getMinZIndex();
+      // Set all selected shapes to be below the current min
+      await Promise.all(
+        selectedShapes.map((s, index) => updateShape(s.id, { zIndex: minZ - selectedShapes.length + index }))
+      );
+    } catch (err) {
+      console.error('[Layer] Error sending to back:', err);
+    }
+  }, [selectedIds, shapes, getMinZIndex, updateShape]);
+
+  // Bring forward (move up one layer)
+  const handleBringForward = useCallback(async () => {
+    if (selectedIds.length === 0) return;
+
+    const selectedShapes = shapes.filter(s => selectedIds.includes(s.id));
+    if (selectedShapes.length === 0) return;
+
+    console.log(`[Layer] Bringing ${selectedShapes.length} shape(s) forward`);
+
+    try {
+      // Move each shape up by 1 z-index
+      await Promise.all(
+        selectedShapes.map(s => updateShape(s.id, { zIndex: (s.zIndex || 0) + 1 }))
+      );
+    } catch (err) {
+      console.error('[Layer] Error bringing forward:', err);
+    }
+  }, [selectedIds, shapes, updateShape]);
+
+  // Send backward (move down one layer)
+  const handleSendBackward = useCallback(async () => {
+    if (selectedIds.length === 0) return;
+
+    const selectedShapes = shapes.filter(s => selectedIds.includes(s.id));
+    if (selectedShapes.length === 0) return;
+
+    console.log(`[Layer] Sending ${selectedShapes.length} shape(s) backward`);
+
+    try {
+      // Move each shape down by 1 z-index
+      await Promise.all(
+        selectedShapes.map(s => updateShape(s.id, { zIndex: (s.zIndex || 0) - 1 }))
+      );
+    } catch (err) {
+      console.error('[Layer] Error sending backward:', err);
+    }
+  }, [selectedIds, shapes, updateShape]);
+
+  // ===== END LAYER OPERATIONS =====
+
+  // ===== COPY/PASTE OPERATIONS =====
+
+  // Copy selected shapes to clipboard
+  const handleCopy = useCallback(() => {
+    if (selectedIds.length === 0) {
+      console.log('[Copy] No shapes selected');
+      return;
+    }
+
+    const selectedShapes = shapes.filter(s => selectedIds.includes(s.id));
+    if (selectedShapes.length === 0) return;
+
+    console.log(`[Copy] Copied ${selectedShapes.length} shape(s) to clipboard`);
+    setClipboard(selectedShapes);
+    showToast(`Copied ${selectedShapes.length} shape${selectedShapes.length > 1 ? 's' : ''}`, 'success');
+  }, [selectedIds, shapes, showToast]);
+
+  // Paste shapes from clipboard
+  const handlePaste = useCallback(async () => {
+    if (clipboard.length === 0) {
+      console.log('[Paste] Clipboard is empty');
+      return;
+    }
+
+    console.log(`[Paste] Pasting ${clipboard.length} shape(s) from clipboard`);
+
+    try {
+      const pasteOffset = 20; // Offset pasted shapes by 20px to make them visible
+
+      // Create new shapes with offset position
+      for (const shape of clipboard) {
+        // Build shape object, only including defined properties (Firestore doesn't allow undefined)
+        const newShape: Omit<Shape, 'id' | 'createdAt' | 'updatedAt'> = {
+          type: shape.type,
+          x: shape.x + pasteOffset,
+          y: shape.y + pasteOffset,
+          width: shape.width,
+          height: shape.height,
+          fill: shape.fill,
+          rotation: shape.rotation || 0,
+          zIndex: shape.zIndex || 0,
+          opacity: shape.opacity ?? 1,
+          userId: user?.uid || 'anonymous',
+          // Only include optional properties if they're defined
+          ...(shape.stroke !== undefined && { stroke: shape.stroke }),
+          ...(shape.textColor !== undefined && { textColor: shape.textColor }),
+          ...(shape.text !== undefined && { text: shape.text }),
+        };
+
+        // Create the new shape (Firebase generates ID and syncs automatically)
+        await createShape(newShape);
+      }
+
+      // Clear selection (newly created shapes will appear via Firebase sync)
+      setSelectedIds([]);
+      showToast(`Pasted ${clipboard.length} shape${clipboard.length > 1 ? 's' : ''}`, 'success');
+    } catch (err) {
+      console.error('[Paste] Error:', err);
+      showToast('Failed to paste shapes', 'error');
+    }
+  }, [clipboard, createShape, user?.uid, showToast]);
+
+  // Duplicate selected shapes (copy + paste in one action)
+  const handleDuplicate = useCallback(async () => {
+    if (selectedIds.length === 0) {
+      console.log('[Duplicate] No shapes selected');
+      return;
+    }
+
+    handleCopy();
+    // Small delay to ensure clipboard is updated
+    setTimeout(() => {
+      handlePaste();
+    }, 50);
+  }, [selectedIds, handleCopy, handlePaste]);
+
+  // ===== END COPY/PASTE OPERATIONS =====
+
+  // ===== EXPORT OPERATIONS =====
+
+  // Export canvas as PNG
+  const handleExportPNG = useCallback(() => {
+    const stage = stageRef.current;
+    if (!stage) {
+      showToast('Export failed: Canvas not found', 'error');
+      return;
+    }
+
+    try {
+      // Get the bounding box of all shapes
+      const layer = stage.findOne('Layer');
+      if (!layer) {
+        showToast('Export failed: No shapes to export', 'error');
+        return;
+      }
+
+      // Export the entire stage as PNG
+      const dataURL = stage.toDataURL({
+        pixelRatio: 2, // Higher quality (2x resolution)
+        mimeType: 'image/png',
+      });
+
+      // Create download link
+      const link = document.createElement('a');
+      link.download = `canvas-export-${Date.now()}.png`;
+      link.href = dataURL;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      showToast('Canvas exported as PNG!', 'success');
+      console.log('[Export] PNG export successful');
+    } catch (err) {
+      console.error('[Export] PNG export failed:', err);
+      showToast('PNG export failed', 'error');
+    }
+  }, [showToast]);
+
+  // Export canvas as SVG
+  const handleExportSVG = useCallback(() => {
+    const stage = stageRef.current;
+    if (!stage) {
+      showToast('Export failed: Canvas not found', 'error');
+      return;
+    }
+
+    try {
+      // Check if Konva has SVG export support
+      if (typeof (stage as any).toSVG !== 'function') {
+        // Manual SVG construction
+        const layer = stage.findOne('Layer');
+        if (!layer) {
+          showToast('Export failed: No shapes to export', 'error');
+          return;
+        }
+
+        // Get stage dimensions
+        const width = stage.width();
+        const height = stage.height();
+
+        // Create SVG string
+        let svgContent = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <rect width="${width}" height="${height}" fill="#1e1e1e"/>
+`;
+
+        // Add shapes to SVG
+        shapes.forEach(shape => {
+          if (shape.type === 'rectangle') {
+            const opacity = shape.opacity ?? 1;
+            svgContent += `  <rect x="${shape.x}" y="${shape.y}" width="${shape.width}" height="${shape.height}" fill="${shape.fill}" opacity="${opacity}" transform="rotate(${shape.rotation || 0} ${shape.x + shape.width/2} ${shape.y + shape.height/2})"/>\n`;
+          } else if (shape.type === 'circle') {
+            const radius = shape.width / 2;
+            const cx = shape.x + radius;
+            const cy = shape.y + radius;
+            const opacity = shape.opacity ?? 1;
+            svgContent += `  <circle cx="${cx}" cy="${cy}" r="${radius}" fill="${shape.fill}" opacity="${opacity}" transform="rotate(${shape.rotation || 0} ${cx} ${cy})"/>\n`;
+          } else if (shape.type === 'text') {
+            const opacity = shape.opacity ?? 1;
+            svgContent += `  <text x="${shape.x}" y="${shape.y + 20}" fill="${shape.textColor || '#ffffff'}" font-size="16" opacity="${opacity}" transform="rotate(${shape.rotation || 0} ${shape.x} ${shape.y})">${shape.text || ''}</text>\n`;
+          } else if (shape.type === 'line') {
+            const x2 = shape.x + shape.width;
+            const y2 = shape.y + shape.height;
+            const opacity = shape.opacity ?? 1;
+            svgContent += `  <line x1="${shape.x}" y1="${shape.y}" x2="${x2}" y2="${y2}" stroke="${shape.stroke || '#ffffff'}" stroke-width="2" opacity="${opacity}"/>\n`;
+          }
+        });
+
+        svgContent += '</svg>';
+
+        // Create blob and download
+        const blob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.download = `canvas-export-${Date.now()}.svg`;
+        link.href = url;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+
+        showToast('Canvas exported as SVG!', 'success');
+        console.log('[Export] SVG export successful');
+      } else {
+        // Use Konva's built-in SVG export if available
+        const svgData = (stage as any).toSVG();
+        const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.download = `canvas-export-${Date.now()}.svg`;
+        link.href = url;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+
+        showToast('Canvas exported as SVG!', 'success');
+        console.log('[Export] SVG export successful');
+      }
+    } catch (err) {
+      console.error('[Export] SVG export failed:', err);
+      showToast('SVG export failed', 'error');
+    }
+  }, [shapes, showToast]);
+
+  // ===== END EXPORT OPERATIONS =====
+
+  // Handle right-click context menu
+  const handleShapeContextMenu = useCallback((e: Konva.KonvaEventObject<PointerEvent>, shapeId: string) => {
+    e.evt.preventDefault();
+    
+    // If right-clicking on a non-selected shape, select it
+    if (!selectedIds.includes(shapeId)) {
+      setSelectedIds([shapeId]);
+    }
+    
+    // Get the mouse position relative to the viewport
+    const stage = e.target.getStage();
+    if (!stage) return;
+    
+    const pointerPos = stage.getPointerPosition();
+    if (!pointerPos) return;
+    
+    setContextMenu({ 
+      x: pointerPos.x, 
+      y: pointerPos.y, 
+      shapeId 
+    });
+    
+    console.log(`[ContextMenu] Opened at (${pointerPos.x}, ${pointerPos.y}) for shape ${shapeId}`);
+  }, [selectedIds]);
+
+  // Close context menu
+  const closeContextMenu = useCallback(() => {
+    setContextMenu(null);
+  }, []);
+
   // Track if we've already initialized the textarea to prevent re-initialization
   const textareaInitialized = useRef<string | null>(null);
 
@@ -363,8 +1436,18 @@ export default function Canvas() {
       const screenWidth = shape.width * stageScale;
       const screenHeight = shape.height * stageScale;
       
-      // Calculate font size proportional to height (same as TextBox component)
-      const fontSize = Math.max(12, shape.height * 0.8) * stageScale;
+      // Calculate font size to stretch text to fill the box (same as TextBox component)
+      const heightBasedSize = Math.max(12, Math.abs(shape.height || 20) * 0.95);
+      const avgCharWidth = heightBasedSize * 0.6;
+      const estimatedTextWidth = (shape.text || 'Text').length * avgCharWidth;
+      const widthScale = estimatedTextWidth > 0 ? shape.width / estimatedTextWidth : 1;
+      const widthBasedSize = heightBasedSize * widthScale;
+      const fontSize = Math.max(12, Math.min(widthBasedSize, shape.height * 0.95)) * stageScale;
+
+      // Calculate letter spacing to help text fill width
+      const targetTextWidth = shape.width * 0.95;
+      const baseTextWidth = (shape.text || 'Text').length * (fontSize / stageScale) * 0.6;
+      const letterSpacing = baseTextWidth > 0 ? ((targetTextWidth - baseTextWidth) / (shape.text || 'Text').length) * stageScale : 0;
 
       // Position textarea over the text box
       textarea.style.position = 'absolute';
@@ -387,6 +1470,9 @@ export default function Canvas() {
       textarea.style.lineHeight = 'normal';
       textarea.style.display = 'flex';
       textarea.style.alignItems = 'center';
+      textarea.style.textAlign = 'center';
+      textarea.style.justifyContent = 'center';
+      textarea.style.letterSpacing = `${letterSpacing}px`;
 
       // Only focus and select on initial setup, not on every update
       if (isNewSession) {
@@ -404,136 +1490,248 @@ export default function Canvas() {
 
   // Handle click on stage background
   const handleStageClick = (e: Konva.KonvaEventObject<MouseEvent>) => {
+    // Don't deselect if we just completed a box selection
+    if (justCompletedBoxSelection.current) {
+      console.log('[handleStageClick] Skipping deselect - just completed box selection');
+      return;
+    }
+    
     // Check if clicked on stage background (not on a shape)
     if (e.target === e.target.getStage()) {
       deselectShape();
     }
   };
 
-  // Track if a delete operation is in progress to prevent double-deletes
-  const deleteInProgressRef = useRef<string | null>(null);
-
-  // Delete selected shape
+  // Delete selected shape(s)
   const handleDeleteSelected = useCallback(async () => {
-    if (!selectedId) {
-      console.warn('[DELETE] No shape selected');
+    if (selectedIds.length === 0) {
+      console.warn('[DELETE] No shapes selected');
       return;
     }
     
-    // Prevent double-delete if operation is already in progress for this shape
-    if (deleteInProgressRef.current === selectedId) {
-      console.warn(`[DELETE] Delete already in progress for shape ${selectedId}`);
+    const shapesToDelete = [...selectedIds]; // Capture for closure
+    console.log(`[DELETE] Deleting ${shapesToDelete.length} shape(s)`);
+    
+    // Validate all shapes exist
+    const validShapes = shapesToDelete.filter(id => shapes.find(s => s.id === id));
+    if (validShapes.length === 0) {
+      console.warn('[DELETE] No valid shapes to delete');
+      setSelectedIds([]);
       return;
     }
     
-    // Check if shape still exists in local state
-    const shapeExists = shapes.find(s => s.id === selectedId);
-    if (!shapeExists) {
-      console.warn(`[DELETE] Shape ${selectedId} not found in local state - may have been deleted by another user`);
-      setSelectedId(null); // Clear selection
-      return;
-    }
-    
-    console.log(`[DELETE] Deleting shape ${selectedId}`);
-    
-    // Mark delete as in progress
-    deleteInProgressRef.current = selectedId;
-    const shapeIdToDelete = selectedId; // Capture for closure
-    
-    try {
-      await deleteShapeFirestore(shapeIdToDelete);
-      setSelectedId(null); // Deselect after delete
-      console.log(`[DELETE] Successfully deleted shape ${shapeIdToDelete}`);
+    // Delete all shapes in parallel
+    const deletePromises = validShapes.map(async (shapeId) => {
+      try {
+        await deleteShape(shapeId);
+        console.log(`[DELETE] Successfully deleted shape ${shapeId}`);
+        return { success: true, id: shapeId };
     } catch (err: any) {
-      console.error('[handleDeleteSelected] Error deleting shape:', err);
+        console.error(`[DELETE] Error deleting shape ${shapeId}:`, err);
       
       // Handle specific error cases
       if (err.code === 'not-found') {
-        console.log('[handleDeleteSelected] Shape was already deleted by another user');
-        errorLogger.logWarning('Shape was already deleted by another user', { 
-          shapeId: shapeIdToDelete 
-        });
-        showToast('Shape was already deleted', 'warning');
+          console.log(`[DELETE] Shape ${shapeId} was already deleted by another user`);
       } else if (err.code === 'permission-denied') {
-        console.error('[handleDeleteSelected] Permission denied - check authentication');
-        errorLogger.logError('Permission denied when deleting shape', err, { 
-          shapeId: shapeIdToDelete 
-        });
-        showToast('Permission denied - cannot delete shape', 'error');
-      } else {
-        errorLogger.logError('Failed to delete shape', err, { 
-          shapeId: shapeIdToDelete,
-          code: err.code,
-          message: err.message
-        });
-        showToast('Failed to delete shape', 'error');
+          console.error(`[DELETE] Permission denied for shape ${shapeId}`);
+        }
+        
+        return { success: false, id: shapeId, error: err };
       }
-      
-      // Still clear selection even if delete failed
-      setSelectedId(null);
-    } finally {
-      // Clear delete in progress flag
-      deleteInProgressRef.current = null;
-    }
-  }, [selectedId, shapes, deleteShapeFirestore, showToast]);
+    });
+    
+    await Promise.allSettled(deletePromises);
+    
+    // Clear selection after delete (no toast notifications)
+    setSelectedIds([]);
+  }, [selectedIds, shapes, deleteShapeFirestore]);
 
-  // Handle AI command execution
-  const handleAICommand = useCallback(async (command: string) => {
-    if (!user) {
-      showToast('You must be logged in to use AI features', 'error');
+  // Clear all shapes from canvas
+  const handleClearCanvas = useCallback(async () => {
+    if (shapes.length === 0) {
+      console.warn('[CLEAR] No shapes to delete');
       return;
+    }
+    
+    console.log(`[CLEAR] Clearing ${shapes.length} shape(s) from canvas`);
+    
+    // Delete all shapes in parallel
+    const deletePromises = shapes.map(async (shape) => {
+      try {
+        await deleteShapeFirestore(shape.id);
+        console.log(`[CLEAR] Successfully deleted shape ${shape.id}`);
+        return { success: true, id: shape.id };
+      } catch (err: any) {
+        console.error(`[CLEAR] Error deleting shape ${shape.id}:`, err);
+        return { success: false, id: shape.id, error: err };
+      }
+    });
+    
+    const results = await Promise.allSettled(deletePromises);
+    const successCount = results.filter(r => r.status === 'fulfilled' && r.value.success).length;
+    
+    // Clear selection
+    setSelectedIds([]);
+    
+    console.log(`[CLEAR] Canvas cleared: ${successCount}/${shapes.length} shapes deleted`);
+  }, [shapes, deleteShapeFirestore]);
+
+  // Helper function to detect and extract bulk shape count from command
+  const detectBulkRequest = useCallback((command: string): number | null => {
+    // Look for patterns like "100 shapes", "create 500", "make 200 circles", etc.
+    const patterns = [
+      /(\d+)\s*shapes/i,
+      /create\s+(\d+)/i,
+      /make\s+(\d+)/i,
+      /generate\s+(\d+)/i,
+      /(\d+)\s*(rectangle|circle|square|box)/i,
+    ];
+    
+    for (const pattern of patterns) {
+      const match = command.match(pattern);
+      if (match && match[1]) {
+        const count = parseInt(match[1], 10);
+        if (count >= 100) {
+          return count;
+        }
+      }
+    }
+    
+    return null;
+  }, []);
+
+  // Execute AI command (called directly or after confirmation)
+  const executeAICommand = useCallback(async (command: string): Promise<{ response: string }> => {
+    if (!user) {
+      throw new Error('User must be logged in');
     }
 
     setIsProcessingAI(true);
     
+    // Add user message to conversation
+    const userMessage: AIChatMessage = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: command,
+      timestamp: Date.now(),
+    };
+    setConversationHistory(prev => [...prev, userMessage]);
+
     try {
       console.log('[AI] Processing command:', command);
-      const aiCommand = await executeAICommand(command, shapes);
-      console.log('[AI] Parsed command:', aiCommand);
 
-      // Execute the command
-      switch (aiCommand.action) {
-        case 'create':
-          if (aiCommand.shapeType && user) {
-            // Get canvas center for shape placement
-            const centerX = (dimensions.width / 2 - stagePos.x) / stageScale;
-            const centerY = (dimensions.height / 2 - stagePos.y) / stageScale;
+      // Create canvas operations object for AI executor
+      const canvasOps: CanvasOperations = {
+        createShape: createShapeFirestore,
+        createShapesBatch: createShapesBatch,
+        updateShape: updateShape,
+        deleteShape: deleteShapeFirestore,
+        getShapes: () => shapes,
+        getSelectedShapeId: () => selectedId,
+        getCanvasDimensions: () => dimensions,
+        getUserId: () => user.uid,
+      };
 
-            const size = aiCommand.shapeType === 'circle' ? 100 : 150;
-            const shapeData = {
-              type: aiCommand.shapeType,
-              x: aiCommand.shapeType === 'circle' ? centerX : centerX - size / 2,
-              y: aiCommand.shapeType === 'circle' ? centerY : centerY - size / 2,
-              width: size,
-              height: aiCommand.shapeType === 'circle' ? size : 100,
-              fill: aiCommand.properties?.fill || getRandomColor(),
-              userId: user.uid,
-            };
+      // Process command using OpenAI
+      const result = await processAICommand(command, canvasOps, conversationHistory);
+      
+      console.log('[AI] Command processed:', result);
 
-            await createShapeFirestore(shapeData);
-            showToast(`Created ${aiCommand.shapeType}!`, 'success');
-          }
-          break;
+      // Add AI response to conversation
+      const assistantMessage: AIChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: result.response,
+        timestamp: Date.now(),
+        executionResult: result.results[0], // Show first result if available
+      };
+      setConversationHistory(prev => [...prev, assistantMessage]);
 
-        case 'delete':
-          if (selectedId) {
-            await handleDeleteSelected();
-            showToast('Shape deleted!', 'success');
-          } else {
-            showToast('No shape selected to delete', 'warning');
-          }
-          break;
+      // Toast notifications removed - chat window shows feedback instead
+      return { response: result.response };
 
-        default:
-          showToast(`Command "${aiCommand.action}" not yet implemented`, 'info');
-      }
     } catch (err) {
       console.error('[AI] Error executing command:', err);
-      showToast(err instanceof Error ? err.message : 'Failed to execute command', 'error');
+      const errorMsg = err instanceof Error ? err.message : 'Failed to execute command';
+      
+      // Add error message to conversation
+      const errorMessage: AIChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: `Error: ${errorMsg}`,
+        timestamp: Date.now(),
+        executionResult: {
+          success: false,
+          message: errorMsg,
+          error: errorMsg,
+        },
+      };
+      setConversationHistory(prev => [...prev, errorMessage]);
+
+      // Error already shown in chat window, no toast needed
+      throw err;
     } finally {
       setIsProcessingAI(false);
     }
-  }, [user, shapes, dimensions, stagePos, stageScale, selectedId, createShapeFirestore, handleDeleteSelected, showToast]);
+  }, [user, shapes, dimensions, selectedId, createShapeFirestore, createShapesBatch, updateShape, deleteShapeFirestore, conversationHistory]);
+
+  // Handle AI command with bulk confirmation check
+  const handleAICommand = useCallback(async (command: string): Promise<{ response: string }> => {
+    if (!user) {
+      const errorMsg = 'You must be logged in to use AI features';
+      throw new Error(errorMsg);
+    }
+
+    // Check if this is a bulk creation request (100+ shapes)
+    const bulkCount = detectBulkRequest(command);
+    
+    if (bulkCount !== null && bulkCount >= 100) {
+      // Show confirmation modal for bulk operations
+      console.log(`[AI] Detected bulk request for ${bulkCount} shapes, showing confirmation`);
+      
+      // Store the command for later execution
+      setBulkConfirmation({
+        count: bulkCount,
+        command: command,
+      });
+      
+      // Return immediately - execution will happen after confirmation
+      return { response: `Confirming creation of ${bulkCount} shapes...` };
+    }
+
+    // For non-bulk requests, execute directly
+    return executeAICommand(command);
+  }, [user, detectBulkRequest, executeAICommand]);
+
+  // Handle bulk confirmation
+  const handleBulkConfirm = useCallback(() => {
+    if (bulkConfirmation) {
+      const { command } = bulkConfirmation;
+      setBulkConfirmation(null);
+      // Execute the command
+      executeAICommand(command).catch((err) => {
+        console.error('[AI] Error after bulk confirmation:', err);
+      });
+    }
+  }, [bulkConfirmation, executeAICommand]);
+
+  // Handle bulk cancellation
+  const handleBulkCancel = useCallback(() => {
+    if (bulkConfirmation) {
+      console.log('[AI] Bulk creation cancelled by user');
+      
+      // Add cancellation message to conversation
+      const cancelMessage: AIChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: `Bulk creation of ${bulkConfirmation.count} shapes cancelled.`,
+        timestamp: Date.now(),
+      };
+      setConversationHistory(prev => [...prev, cancelMessage]);
+      
+      setBulkConfirmation(null);
+    }
+  }, [bulkConfirmation]);
 
   // Keyboard shortcuts
   // Debug: Log Stage draggability changes
@@ -544,8 +1742,94 @@ export default function Canvas() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger shortcuts if currently editing text
+      // ? - Show keyboard shortcuts (works anytime, even during text editing)
+      if (e.key === '?' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        setShowKeyboardShortcuts(true);
+        return;
+      }
+
+      // Don't trigger other shortcuts if currently editing text
       if (editingTextId) {
+        return;
+      }
+
+      // Cmd+A / Ctrl+A - Select all shapes
+      if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
+        e.preventDefault();
+        const allShapeIds = shapes.map(s => s.id);
+        setSelectedIds(allShapeIds);
+        showToast(`Selected ${allShapeIds.length} shape${allShapeIds.length > 1 ? 's' : ''}`, 'info');
+        return;
+      }
+
+      // Cmd+C / Ctrl+C - Copy
+      if ((e.metaKey || e.ctrlKey) && e.key === 'c') {
+        e.preventDefault();
+        handleCopy();
+        return;
+      }
+
+      // Cmd+V / Ctrl+V - Paste
+      if ((e.metaKey || e.ctrlKey) && e.key === 'v') {
+        e.preventDefault();
+        handlePaste();
+        return;
+      }
+
+      // Cmd+D / Ctrl+D - Duplicate
+      if ((e.metaKey || e.ctrlKey) && e.key === 'd') {
+        e.preventDefault();
+        handleDuplicate();
+        return;
+      }
+
+      // Cmd+Z / Ctrl+Z - Undo
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+        return;
+      }
+
+      // Cmd+Shift+Z / Ctrl+Shift+Z - Redo
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && e.shiftKey) {
+        e.preventDefault();
+        handleRedo();
+        return;
+      }
+
+      // Cmd+Y / Ctrl+Y - Alternative Redo (Windows standard)
+      if ((e.metaKey || e.ctrlKey) && e.key === 'y') {
+        e.preventDefault();
+        handleRedo();
+        return;
+      }
+
+      // Cmd+] / Ctrl+] - Bring to Front (without Alt/Option)
+      if ((e.metaKey || e.ctrlKey) && e.key === ']' && !e.altKey) {
+        e.preventDefault();
+        handleBringToFront();
+        return;
+      }
+
+      // Cmd+[ / Ctrl+[ - Send to Back (without Alt/Option)
+      if ((e.metaKey || e.ctrlKey) && e.key === '[' && !e.altKey) {
+        e.preventDefault();
+        handleSendToBack();
+        return;
+      }
+
+      // Cmd+Alt+] / Ctrl+Alt+] - Bring Forward
+      if ((e.metaKey || e.ctrlKey) && e.altKey && e.key === ']') {
+        e.preventDefault();
+        handleBringForward();
+        return;
+      }
+
+      // Cmd+Alt+[ / Ctrl+Alt+[ - Send Backward
+      if ((e.metaKey || e.ctrlKey) && e.altKey && e.key === '[') {
+        e.preventDefault();
+        handleSendBackward();
         return;
       }
 
@@ -555,8 +1839,19 @@ export default function Canvas() {
         handleDeleteSelected();
       }
       
-      // Escape - cancel drag-to-create or placement mode
-      if (e.key === 'Escape' && (isDraggingCreate || isPlacementMode)) {
+      // Escape - deselect all, cancel drag-to-create or placement mode, or close shortcuts modal
+      if (e.key === 'Escape') {
+        if (showKeyboardShortcuts) {
+          e.preventDefault();
+          setShowKeyboardShortcuts(false);
+          return;
+        }
+        if (selectedIds.length > 0 && !isDraggingCreate && !isPlacementMode) {
+          e.preventDefault();
+          setSelectedIds([]);
+          return;
+        }
+        if (isDraggingCreate || isPlacementMode) {
         e.preventDefault();
         setIsDraggingCreate(false);
         setIsPlacementMode(false);
@@ -566,13 +1861,14 @@ export default function Canvas() {
         isMouseDown.current = false;
         if (stageRef.current) {
           stageRef.current.draggable(true);
+          }
         }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedId, handleDeleteSelected, isDraggingCreate, isPlacementMode, editingTextId]);
+  }, [selectedId, selectedIds, shapes, handleDeleteSelected, isDraggingCreate, isPlacementMode, editingTextId, handleUndo, handleRedo, handleBringToFront, handleSendToBack, handleBringForward, handleSendBackward, handleCopy, handlePaste, handleDuplicate, showKeyboardShortcuts, showToast]);
 
   // Handle shape addition from sidebar - Click = custom-size drag mode
   const handleAddShape = (type: 'rectangle' | 'circle' | 'text' | 'line') => {
@@ -614,6 +1910,17 @@ export default function Canvas() {
     const canvasX = (pointer.x - stagePos.x) / stageScale;
     const canvasY = (pointer.y - stagePos.y) / stageScale;
 
+    // Handle box selection drag in select mode
+    if (cursorMode === 'select' && boxSelectionStart.current) {
+      const startX = boxSelectionStart.current.x;
+      const startY = boxSelectionStart.current.y;
+      const width = canvasX - startX;
+      const height = canvasY - startY;
+      
+      setSelectionBox({ x: startX, y: startY, width, height });
+      return; // Don't process other mouse move logic
+    }
+
     // DEBUG: Log when in drag-create mode
     if (isDraggingCreate) {
       console.log(`[handleMouseMove] 🖱️ isDraggingCreate: ${isDraggingCreate}, isMouseDown: ${isMouseDown.current}, placementType: ${placementType}, dragStartPos: ${dragStartPos.current ? 'SET' : 'NULL'}`);
@@ -627,9 +1934,15 @@ export default function Canvas() {
       if (placementType === 'line') {
         // For lines: from start point to current cursor position
         // Store as: x,y = start point, width = deltaX, height = deltaY
-        const deltaX = canvasX - startX;
-        const deltaY = canvasY - startY;
-        console.log(`[LINE PREVIEW] Start: (${startX.toFixed(2)}, ${startY.toFixed(2)}), Current: (${canvasX.toFixed(2)}, ${canvasY.toFixed(2)}), Deltas: (${deltaX.toFixed(2)}, ${deltaY.toFixed(2)})`);
+        let deltaX = canvasX - startX;
+        let deltaY = canvasY - startY;
+        
+        // Apply angle snapping (snap to 0°, 90°, 180°, 270° within 5° tolerance)
+        const snapped = snapLineDelta(deltaX, deltaY, 5);
+        deltaX = snapped.deltaX;
+        deltaY = snapped.deltaY;
+        
+        console.log(`[LINE PREVIEW] Start: (${startX.toFixed(2)}, ${startY.toFixed(2)}), Current: (${canvasX.toFixed(2)}, ${canvasY.toFixed(2)}), Deltas: (${deltaX.toFixed(2)}, ${deltaY.toFixed(2)})${snapped.isSnapped ? ' [SNAPPED]' : ''}`);
         setPreviewShape({ 
           x: startX, 
           y: startY, 
@@ -637,18 +1950,18 @@ export default function Canvas() {
           height: deltaY 
         });
       } else if (placementType === 'circle') {
-        // For circles: expand radially from center using actual distance
+        // For circles/ovals: expand from center with independent width and height
         const deltaX = canvasX - startX;
         const deltaY = canvasY - startY;
-        const radius = Math.sqrt(deltaX * deltaX + deltaY * deltaY); // Euclidean distance
-        const diameter = radius * 2;
+        const width = Math.abs(deltaX) * 2; // Full width (left + right from center)
+        const height = Math.abs(deltaY) * 2; // Full height (top + bottom from center)
         
-        // Circle center is the start point, x/y for storage is center
+        // Circle/oval center is the start point, x/y for storage is center
         setPreviewShape({ 
           x: startX, 
           y: startY, 
-          width: diameter, 
-          height: diameter 
+          width: width, 
+          height: height 
         });
       } else {
         // For rectangles and text boxes: expand from corner
@@ -750,7 +2063,7 @@ export default function Canvas() {
     const canvasX = (pointer.x - stagePos.x) / stageScale;
     const canvasY = (pointer.y - stagePos.y) / stageScale;
 
-    console.log(`[handleCanvasMouseDown] isDraggingCreate: ${isDraggingCreate}, isPlacementMode: ${isPlacementMode}, placementType: ${placementType}`);
+    console.log(`[handleCanvasMouseDown] isDraggingCreate: ${isDraggingCreate}, isPlacementMode: ${isPlacementMode}, placementType: ${placementType}, cursorMode: ${cursorMode}`);
 
     // If in drag-create mode (custom-size), start dragging
     if (isDraggingCreate && !isMouseDown.current) {
@@ -758,15 +2071,22 @@ export default function Canvas() {
       dragStartPos.current = { x: canvasX, y: canvasY };
       console.log(`[handleCanvasMouseDown] 🎯 Started drag from (${canvasX.toFixed(2)}, ${canvasY.toFixed(2)}) for ${placementType}`);
     }
+    
+    // If in select mode and clicking on empty canvas, start box selection
+    if (cursorMode === 'select' && e.target === e.currentTarget && !isDraggingCreate && !isPlacementMode) {
+      boxSelectionStart.current = { x: canvasX, y: canvasY };
+      setSelectionBox({ x: canvasX, y: canvasY, width: 0, height: 0 });
+      console.log(`[handleCanvasMouseDown] 📦 Starting box selection at (${canvasX.toFixed(2)}, ${canvasY.toFixed(2)})`);
+    }
   };
 
   // Create shape from placement mode (fixed-size)
   const createPlacementShape = async () => {
     if (!previewShape || !user || !placementType) return;
     
-    // For circles, ensure width and height are equal (use width as diameter)
+    // Use actual width and height from preview (circles can now be ovals)
     const shapeWidth = previewShape.width;
-    const shapeHeight = placementType === 'circle' ? previewShape.width : previewShape.height;
+    const shapeHeight = previewShape.height;
     
     console.log(`[createPlacementShape] Creating ${placementType} at preview position (${previewShape.x.toFixed(2)}, ${previewShape.y.toFixed(2)})`);
     
@@ -788,7 +2108,7 @@ export default function Canvas() {
       
       console.log(`[createPlacementShape] 📝 Shape data:`, shapeData);
 
-      await createShapeFirestore(shapeData);
+      await createShape(shapeData);
       console.log(`[PLACEMENT] ✅ Created ${placementType} at (${previewShape.x.toFixed(2)}, ${previewShape.y.toFixed(2)})`);
     } catch (err: any) {
       console.error('[createPlacementShape] Error:', err);
@@ -813,6 +2133,47 @@ export default function Canvas() {
 
   // Handle mouse up - finalize shape creation (both modes)
   const handleMouseUp = async () => {
+    // Handle box selection completion in select mode
+    if (cursorMode === 'select' && boxSelectionStart.current && selectionBox) {
+      // Calculate the selection box bounds (normalized to handle negative dimensions)
+      const box = selectionBox;
+      const x1 = Math.min(box.x, box.x + box.width);
+      const y1 = Math.min(box.y, box.y + box.height);
+      const x2 = Math.max(box.x, box.x + box.width);
+      const y2 = Math.max(box.y, box.y + box.height);
+      
+      // Find all shapes that intersect with the selection box
+      const selectedShapeIds = shapes.filter(shape => {
+        const shapeX1 = shape.x;
+        const shapeY1 = shape.y;
+        const shapeX2 = shape.x + shape.width;
+        const shapeY2 = shape.y + shape.height;
+        
+        // Check for intersection
+        return !(shapeX2 < x1 || shapeX1 > x2 || shapeY2 < y1 || shapeY1 > y2);
+      }).map(s => s.id);
+      
+      selectMultipleShapes(selectedShapeIds);
+      console.log(`[handleMouseUp] 📦 Box selection complete: selected ${selectedShapeIds.length} shape(s)`);
+      
+      // Set flag to prevent handleStageClick from clearing the selection
+      justCompletedBoxSelection.current = true;
+      setTimeout(() => {
+        justCompletedBoxSelection.current = false;
+      }, 100);
+      
+      // Clear box selection
+      boxSelectionStart.current = null;
+      setSelectionBox(null);
+      
+      // Force transformer to update after state change
+      setTimeout(() => {
+        transformerRef.current?.getLayer()?.batchDraw();
+      }, 0);
+      
+      return;
+    }
+    
     // Mode 2: Placement mode (fixed-size) - create on release
     if (isPlacementMode && previewShape && user) {
       await createPlacementShape();
@@ -835,9 +2196,9 @@ export default function Canvas() {
         finalX = previewShape.x; // Start point
         finalY = previewShape.y;
       } else {
-        // For circles, ensure width=height (diameter). For rectangles and text, use actual dimensions.
-        shapeWidth = placementType === 'circle' ? Math.max(previewShape.width, previewShape.height) : previewShape.width;
-        shapeHeight = placementType === 'circle' ? shapeWidth : previewShape.height;
+        // Use actual dimensions from preview (circles can now be ovals)
+        shapeWidth = previewShape.width;
+        shapeHeight = previewShape.height;
         
         // Position is already correct from preview:
         // - Circles: x, y is already the center point
@@ -866,7 +2227,7 @@ export default function Canvas() {
             shapeData.text = 'Text';
           }
 
-          await createShapeFirestore(shapeData);
+          await createShape(shapeData);
           console.log(`[DRAG CREATE] Created ${placementType} at (${finalX.toFixed(2)}, ${finalY.toFixed(2)}) with ${placementType === 'line' ? `deltas (${shapeWidth.toFixed(2)}, ${shapeHeight.toFixed(2)})` : `size ${shapeWidth.toFixed(2)}x${shapeHeight.toFixed(2)}`}`);
         } catch (err: any) {
           console.error('[handleMouseUp] Error creating shape:', err);
@@ -999,11 +2360,60 @@ export default function Canvas() {
         onAddShape={handleAddShape}
         onStartDragCreate={handleStartDragCreate}
         onDeleteSelected={handleDeleteSelected}
+        onClearCanvas={handleClearCanvas}
         selectedShape={selectedId}
-        onStressTest={import.meta.env.DEV ? handleStressTest : undefined}
+        selectedShapeCount={selectedIds.length}
+        cursorMode={cursorMode}
+        onCursorModeChange={setCursorMode}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        onShowKeyboardShortcuts={() => setShowKeyboardShortcuts(true)}
+        onExport={() => setShowExportModal(true)}
         fps={fps}
       />
       <UserMenu presence={presence} />
+      
+      {/* Selection Count Indicator */}
+      <SelectionIndicator count={selectedIds.length} />
+      
+      {/* Unified Shape Style Panel - includes colors, opacity, alignment, and layer controls */}
+      {selectedIds.length > 0 && (
+        <ShapeStylePanel
+          selectedShape={shapes.find(s => s.id === selectedIds[0]) || null}
+          selectedCount={selectedIds.length}
+          onColorChange={handleColorChange}
+          onStrokeColorChange={handleStrokeColorChange}
+          onTextColorChange={handleTextColorChange}
+          onOpacityChange={handleOpacityChange}
+          onAlign={handleAlign}
+          onDistribute={handleDistribute}
+          onCenterCanvas={handleCenterOnCanvas}
+          onBringToFront={handleBringToFront}
+          onSendToBack={handleSendToBack}
+          onBringForward={handleBringForward}
+          onSendBackward={handleSendBackward}
+        />
+      )}
+
+      {/* Context Menu - appears on right-click */}
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          selectedCount={selectedIds.length}
+          onClose={closeContextMenu}
+          onBringToFront={handleBringToFront}
+          onSendToBack={handleSendToBack}
+          onBringForward={handleBringForward}
+          onSendBackward={handleSendBackward}
+          onCopy={handleCopy}
+          onPaste={handlePaste}
+          onDuplicate={handleDuplicate}
+          onDelete={handleDeleteSelected}
+        />
+      )}
       
       {/* Toast Notifications */}
       {toast && (
@@ -1013,19 +2423,35 @@ export default function Canvas() {
           onClose={() => setToast(null)}
         />
       )}
+
+      {/* Keyboard Shortcuts Modal */}
+      <KeyboardShortcuts
+        isOpen={showKeyboardShortcuts}
+        onClose={() => setShowKeyboardShortcuts(false)}
+      />
+
+      {/* Export Modal */}
+      {showExportModal && (
+        <ExportModal
+          onClose={() => setShowExportModal(false)}
+          onExportPNG={handleExportPNG}
+          onExportSVG={handleExportSVG}
+        />
+      )}
       
       <div 
-        className={`canvas-container ${isDraggingCreate ? 'create-mode' : ''}`}
+        className={`canvas-container ${isDraggingCreate ? 'create-mode' : ''} ${cursorMode === 'select' ? 'select-mode' : ''}`}
       >
         <Stage
           ref={stageRef}
           width={dimensions.width}
           height={dimensions.height}
-          draggable={!isDraggingShape && !isDraggingCreate && !isPlacementMode}
+          draggable={cursorMode === 'pan' && !isDraggingShape && !isDraggingCreate && !isPlacementMode}
           dragBoundFunc={(pos) => {
             // CRITICAL: If dragging a shape, prevent Stage from moving AT ALL
             // This ensures Stage drag doesn't interfere with shape drags
-            if (isDraggingShape || isDraggingCreate || isPlacementMode) {
+            // Also prevent dragging in select mode
+            if (cursorMode === 'select' || isDraggingShape || isDraggingCreate || isPlacementMode) {
               return { x: stagePos.x, y: stagePos.y }; // Return current position (no movement)
             }
             return pos; // Allow normal Stage dragging
@@ -1049,7 +2475,8 @@ export default function Canvas() {
             {renderGrid()}
             
             {/* Render all shapes (rectangles, circles, and text boxes) */}
-            {shapes.map((shape) => {
+            {/* CRITICAL: Sort by z-index to ensure proper layering */}
+            {[...shapes].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0)).map((shape) => {
               const shapeProps = {
                 id: shape.id,
                 x: shape.x,
@@ -1057,13 +2484,35 @@ export default function Canvas() {
                 width: shape.width,
                 height: shape.height,
                 fill: shape.fill,
-                isSelected: shape.id === selectedId,
+                stroke: shape.stroke,
+                textColor: shape.textColor,
+                rotation: shape.rotation || 0,
+                opacity: shape.opacity ?? 1,
+                isSelected: selectedIds.includes(shape.id),
                 isLocked: shape.isLocked,
                 lockedBy: shape.lockedBy,
                 currentUserId: user?.uid,
                 onDragStart: handleShapeDragStart,
+                onDragMove: handleShapeDragMove,
                 onDragEnd: handleShapeDragEnd,
-                onClick: selectShape,
+                onClick: (id: string, evt?: any) => {
+                  // Support shift-click for multi-select
+                  const isShiftPressed = evt?.evt?.shiftKey || false;
+                  selectShape(id, isShiftPressed);
+                },
+                onContextMenu: (e: Konva.KonvaEventObject<PointerEvent>) => {
+                  handleShapeContextMenu(e, shape.id);
+                },
+                onTransformEnd: handleTransformEnd,
+                // Add Figma-style endpoint dragging for lines
+                ...(shape.type === 'line' && { onEndpointDrag: handleLineEndpointDrag }),
+                shapeRef: (node: Konva.Node | null) => {
+                  if (node) {
+                    shapeRefs.current.set(shape.id, node);
+                  } else {
+                    shapeRefs.current.delete(shape.id);
+                  }
+                },
               };
 
               if (shape.type === 'circle') {
@@ -1085,6 +2534,135 @@ export default function Canvas() {
               }
             })}
             
+            {/* Transformer for resize and rotate */}
+            {/* Hide Transformer for lines (they use Figma-style endpoint editing) */}
+            {(() => {
+              const selectedShape = selectedIds.length === 1 ? shapes.find(s => s.id === selectedIds[0]) : null;
+              const isLineSelected = selectedShape?.type === 'line';
+              
+              return (
+            <Transformer
+              ref={transformerRef}
+                  visible={!isLineSelected} // Hide for lines
+              boundBoxFunc={(oldBox, newBox) => {
+                // Limit minimum size to prevent tiny shapes
+                const minWidth = 20;
+                const minHeight = 20;
+                
+                if (newBox.width < minWidth || newBox.height < minHeight) {
+                  return oldBox;
+                }
+                return newBox;
+              }}
+              enabledAnchors={[
+                'top-left',
+                'top-center',
+                'top-right',
+                'middle-right',
+                'middle-left',
+                'bottom-left',
+                'bottom-center',
+                'bottom-right',
+              ]}
+              rotateEnabled={true}
+              onTransformStart={handleTransformStart}
+              onTransform={handleTransform}
+              onTransformEnd={handleTransformEnd}
+              shouldOverdrawWholeArea={false}
+              ignoreStroke={false}
+            />
+              );
+            })()}
+            
+            {/* Dimension badge for selected shape - rendered outside shape Group */}
+            {selectedId && (() => {
+              const selectedShape = shapes.find(s => s.id === selectedId);
+              if (!selectedShape) return null;
+              
+              // Use live props if available (during drag/transform), otherwise use shape from state
+              const displayProps = liveShapeProps && liveShapeProps.id === selectedId ? liveShapeProps : {
+                x: selectedShape.x,
+                y: selectedShape.y,
+                width: selectedShape.width,
+                height: selectedShape.height,
+                rotation: selectedShape.rotation || 0,
+              };
+              
+              // For lines: show actual line length dimensions (not bounding box)
+              // Lines store deltaX and deltaY, so show absolute values
+              let dimensionsText: string;
+              if (selectedShape.type === 'line') {
+                const absWidth = Math.abs(Math.round(displayProps.width));
+                const absHeight = Math.abs(Math.round(displayProps.height));
+                dimensionsText = `${absWidth} × ${absHeight}`;
+              } else {
+                dimensionsText = `${Math.round(displayProps.width)} × ${Math.round(displayProps.height)}`;
+              }
+              const badgePadding = { x: 8, y: 4 };
+              const badgeFontSize = 12;
+              const textWidth = dimensionsText.length * 7;
+              const badgeWidth = textWidth + badgePadding.x * 2;
+              const badgeHeight = badgeFontSize + badgePadding.y * 2;
+              
+              // Calculate badge position based on shape type and rotation
+              const rotation = displayProps.rotation;
+              const rotationRad = (rotation * Math.PI) / 180;
+              
+              let badgeX, badgeY;
+              
+              if (selectedShape.type === 'circle') {
+                // For circles/ovals: center below the shape
+                // Use the larger radius to position badge below the shape
+                const radiusY = displayProps.height / 2;
+                badgeX = displayProps.x - badgeWidth / 2;
+                badgeY = displayProps.y + radiusY + 10;
+              } else if (selectedShape.type === 'line') {
+                // For lines: below the end point
+                const endY = displayProps.y + displayProps.height;
+                const maxY = Math.max(displayProps.y, endY);
+                badgeX = displayProps.x + displayProps.width / 2 - badgeWidth / 2;
+                badgeY = maxY + 10;
+              } else {
+                // For rectangles and text: calculate bottom-center accounting for rotation
+                const centerX = displayProps.width / 2;
+                const bottomY = displayProps.height;
+                
+                // Apply rotation transformation
+                const rotatedX = centerX * Math.cos(rotationRad) - bottomY * Math.sin(rotationRad);
+                const rotatedY = centerX * Math.sin(rotationRad) + bottomY * Math.cos(rotationRad);
+                
+                badgeX = displayProps.x + rotatedX - badgeWidth / 2;
+                badgeY = displayProps.y + rotatedY + 10;
+              }
+              
+              return (
+                <Group>
+                  {/* Badge background */}
+                  <Rect
+                    x={badgeX}
+                    y={badgeY}
+                    width={badgeWidth}
+                    height={badgeHeight}
+                    fill="#3498db"
+                    cornerRadius={4}
+                    listening={false}
+                  />
+                  {/* Dimensions text */}
+                  <Text
+                    x={badgeX}
+                    y={badgeY + badgePadding.y}
+                    width={badgeWidth}
+                    text={dimensionsText}
+                    fontSize={badgeFontSize}
+                    fill="white"
+                    align="center"
+                    fontStyle="bold"
+                    listening={false}
+                  />
+                </Group>
+              );
+            })()}
+            
             {/* Preview shape while dragging to create */}
             {previewShape && placementType && (isPlacementMode || (isDraggingCreate && isMouseDown.current)) && (
               placementType === 'line' ? (
@@ -1099,7 +2677,8 @@ export default function Canvas() {
                   isSelected={true}
                   isLocked={false}
                   lockedBy={undefined}
-                  onSelect={() => {}}
+                  currentUserId={user?.uid}
+                  onClick={() => {}}
                   onDragStart={() => {}}
                   onDragEnd={() => {}}
                   opacity={0.7}
@@ -1161,6 +2740,21 @@ export default function Canvas() {
                 />
               )
             )}
+            
+            {/* Box selection visualization */}
+            {selectionBox && cursorMode === 'select' && (
+              <Rect
+                x={selectionBox.x}
+                y={selectionBox.y}
+                width={selectionBox.width}
+                height={selectionBox.height}
+                fill="rgba(52, 152, 219, 0.1)"
+                stroke="#3498db"
+                strokeWidth={2 / stageScale}
+                dash={[10 / stageScale, 5 / stageScale]}
+                listening={false}
+              />
+            )}
           </Layer>
 
           {/* Separate layer for cursors (performance optimization) */}
@@ -1172,21 +2766,33 @@ export default function Canvas() {
         </Stage>
       </div>
 
-      {/* AI Command Input */}
-      <AICommandInput
+      {/* AI Chat Window */}
+      <AIChatWindow
         onExecuteCommand={handleAICommand}
         isProcessing={isProcessingAI}
         aiEnabled={AI_ENABLED}
+        conversationHistory={conversationHistory}
       />
+
+      {/* Bulk Shape Confirmation Modal */}
+      {bulkConfirmation && (
+        <BulkConfirmationModal
+          count={bulkConfirmation.count}
+          onConfirm={handleBulkConfirm}
+          onCancel={handleBulkCancel}
+        />
+      )}
 
       {/* Text Editing Overlay */}
       {editingTextId && (
         <textarea
           ref={textareaRef}
           value={editingText}
-          onChange={(e) => {
-            setEditingText(e.target.value);
-            // Auto-resize textarea width based on content
+          onChange={async (e) => {
+            const newText = e.target.value;
+            setEditingText(newText);
+            
+            // Auto-resize textarea and shape width based on content
             const shape = shapes.find(s => s.id === editingTextId);
             if (shape && textareaRef.current) {
               const fontSize = Math.max(12, shape.height * 0.8) * stageScale;
@@ -1194,9 +2800,23 @@ export default function Canvas() {
               const context = canvas.getContext('2d');
               if (context) {
                 context.font = `${fontSize}px Arial, sans-serif`;
-                const metrics = context.measureText(e.target.value || 'Text');
+                const metrics = context.measureText(newText || 'Text');
                 const newWidth = Math.max(50, (metrics.width + 20) * stageScale);
+                const actualWidth = Math.max(50, metrics.width + 20); // Unscaled width for shape
+                
+                // Update textarea width immediately
                 textareaRef.current.style.width = `${newWidth}px`;
+                
+                // Update shape width in real-time for dimensions display
+                try {
+                  await updateShape(editingTextId, { 
+                    text: newText,
+                    width: actualWidth 
+                  });
+                } catch (err) {
+                  // Silently fail during typing - will be saved on blur
+                  console.log('[Text Edit] Width update during typing:', err);
+                }
               }
             }
           }}

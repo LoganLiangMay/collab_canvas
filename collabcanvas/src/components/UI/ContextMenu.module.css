@@ -1,0 +1,117 @@
+.menu {
+  position: fixed;
+  min-width: 220px;
+  background: rgba(30, 30, 30, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  padding: 6px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(20px);
+  z-index: 10000;
+  animation: contextMenuFadeIn 0.15s ease-out;
+}
+
+@keyframes contextMenuFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.header {
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  margin-bottom: 6px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sectionLabel {
+  padding: 8px 12px 4px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.4);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.1s;
+  width: 100%;
+  text-align: left;
+}
+
+.menuItem:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.menuItem:active {
+  background: rgba(255, 255, 255, 0.15);
+  transform: scale(0.98);
+}
+
+.menuItem svg {
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+
+.menuItem span:first-of-type {
+  flex: 1;
+}
+
+.shortcut {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+  font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
+}
+
+.divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 6px 0;
+}
+
+.danger {
+  color: #ff6b6b;
+}
+
+.danger:hover {
+  background: rgba(255, 107, 107, 0.15);
+  color: #ff8787;
+}
+
+.danger svg {
+  color: #ff6b6b;
+}
+
+/* Platform-specific shortcuts */
+@media (platform: windows) {
+  .shortcut {
+    /* Windows users will see Ctrl instead of ⌘ */
+  }
+}
+

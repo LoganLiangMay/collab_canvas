@@ -9,13 +9,18 @@ interface RectangleProps {
   width: number;
   height: number;
   fill: string;
+  rotation?: number;
   isSelected: boolean;
   isLocked?: boolean;
   lockedBy?: string;
   currentUserId?: string;
   onDragStart: (id: string) => void;
+  onDragMove?: (id: string, x: number, y: number) => void;
   onDragEnd: (id: string, x: number, y: number) => void;
   onClick: (id: string) => void;
+  onContextMenu?: (e: Konva.KonvaEventObject<PointerEvent>) => void;
+  onTransformEnd?: (e: any) => void;
+  shapeRef?: (node: any) => void;
   opacity?: number;
 }
 
@@ -26,13 +31,18 @@ function Rectangle({
   width,
   height,
   fill,
-  isSelected,
+  rotation = 0,
+  isSelected: _isSelected, // Kept for Transformer selection, not used in component
   isLocked,
   lockedBy,
   currentUserId,
   onDragStart,
+  onDragMove,
   onDragEnd,
   onClick,
+  onContextMenu,
+  onTransformEnd,
+  shapeRef,
   opacity = 1,
 }: RectangleProps) {
   // Check if this shape is locked by another user
@@ -49,7 +59,12 @@ function Rectangle({
 
   const handleDrag = (e: Konva.KonvaEventObject<DragEvent>) => {
     e.cancelBubble = true;
-    console.log(`[SHAPE DRAGGING] ID: ${id}, Position: (${e.target.x().toFixed(2)}, ${e.target.y().toFixed(2)})`);
+    const newX = e.target.x();
+    const newY = e.target.y();
+    console.log(`[SHAPE DRAGGING] ID: ${id}, Position: (${newX.toFixed(2)}, ${newY.toFixed(2)})`);
+    if (onDragMove) {
+      onDragMove(id, newX, newY);
+    }
   };
 
   const handleDragEnd = (e: Konva.KonvaEventObject<DragEvent>) => {
@@ -69,34 +84,23 @@ function Rectangle({
     e.cancelBubble = true; // Prevent stage from starting drag
   };
 
-  // Calculate dimensions text and badge dimensions
-  const dimensionsText = `${Math.round(width)} × ${Math.round(height)}`;
-  const badgePadding = { x: 8, y: 4 };
-  const badgeFontSize = 12;
-  // Approximate text width (rough estimate: 7px per character)
-  const textWidth = dimensionsText.length * 7;
-  const badgeWidth = textWidth + badgePadding.x * 2;
-  const badgeHeight = badgeFontSize + badgePadding.y * 2;
-
-  // Corner handle positions (for Figma-style selection)
-  const handleSize = 6;
-  const handlePositions = [
-    { x: 0, y: 0 }, // top-left
-    { x: width, y: 0 }, // top-right
-    { x: 0, y: height }, // bottom-left
-    { x: width, y: height }, // bottom-right
-  ];
-
   return (
     <Group
+      id={id}
       x={x}
       y={y}
+      width={width}
+      height={height}
+      rotation={rotation}
       draggable={isDraggable}
       onMouseDown={handleMouseDown}
       onDragStart={handleDragStart}
       onDragMove={handleDrag}
       onDragEnd={handleDragEnd}
       onClick={handleClick}
+      onContextMenu={onContextMenu}
+      onTransformEnd={onTransformEnd}
+      ref={shapeRef}
     >
       {/* Main rectangle shape */}
       <Rect
@@ -106,26 +110,9 @@ function Rectangle({
         height={height}
         fill={fill}
         opacity={opacity}
-        stroke={isSelected ? '#3498db' : isLockedByOther ? '#e74c3c' : undefined}
-        strokeWidth={isSelected || isLockedByOther ? 2 : 0}
+        stroke={isLockedByOther ? '#e74c3c' : undefined}
+        strokeWidth={isLockedByOther ? 2 : 0}
       />
-      
-      {/* Figma-style corner handles when selected */}
-      {isSelected && handlePositions.map((pos, index) => (
-        <Group key={index}>
-          {/* White fill */}
-          <Rect
-            x={pos.x - handleSize / 2}
-            y={pos.y - handleSize / 2}
-            width={handleSize}
-            height={handleSize}
-            fill="white"
-            stroke="#3498db"
-            strokeWidth={2}
-            listening={false}
-          />
-        </Group>
-      ))}
       
       {/* Show lock indicator when locked by another user */}
       {isLockedByOther && (
@@ -138,34 +125,6 @@ function Rectangle({
           fontStyle="bold"
           listening={false}
         />
-      )}
-
-      {/* Show dimensions badge when selected - follows during drag */}
-      {isSelected && (
-        <Group>
-          {/* Badge background */}
-          <Rect
-            x={width / 2 - badgeWidth / 2}
-            y={height + 10}
-            width={badgeWidth}
-            height={badgeHeight}
-            fill="#3498db"
-            cornerRadius={4}
-            listening={false}
-          />
-          {/* Dimensions text */}
-          <Text
-            x={width / 2 - badgeWidth / 2}
-            y={height + 10 + badgePadding.y}
-            width={badgeWidth}
-            text={dimensionsText}
-            fontSize={badgeFontSize}
-            fill="white"
-            align="center"
-            fontStyle="bold"
-            listening={false}
-          />
-        </Group>
       )}
     </Group>
   );
@@ -180,6 +139,7 @@ export default memo(Rectangle, (prevProps, nextProps) => {
     prevProps.width === nextProps.width &&
     prevProps.height === nextProps.height &&
     prevProps.fill === nextProps.fill &&
+    prevProps.rotation === nextProps.rotation &&
     prevProps.isSelected === nextProps.isSelected &&
     prevProps.isLocked === nextProps.isLocked &&
     prevProps.lockedBy === nextProps.lockedBy &&
