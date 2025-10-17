@@ -381,8 +381,12 @@ export default function Canvas() {
     }
   };
 
-  // Handle shape drag move (update live position for dimension badge)
-  const handleShapeDragMove = (id: string, x: number, y: number) => {
+  // Throttled position sync during drag - ref to track last sync time
+  const lastDragSyncTime = useRef<number>(0);
+  const DRAG_SYNC_THROTTLE_MS = 100; // Sync position every 100ms during drag
+
+  // Handle shape drag move (update live position for dimension badge + real-time sync)
+  const handleShapeDragMove = useCallback((id: string, x: number, y: number) => {
     const shape = shapes.find(s => s.id === id);
     if (shape && liveShapeProps && liveShapeProps.id === id) {
       setLiveShapeProps({
@@ -391,7 +395,25 @@ export default function Canvas() {
         y,
       });
     }
-  };
+
+    // Update cursor position during shape drag (so others can see it moving)
+    // The shape center is a good approximation of cursor position during drag
+    const cursorX = x + (shape?.width || 0) / 2;
+    const cursorY = y + (shape?.height || 0) / 2;
+    updateCursor(cursorX, cursorY);
+
+    // Real-time position sync during drag (throttled to avoid excessive writes)
+    const now = Date.now();
+    if (now - lastDragSyncTime.current >= DRAG_SYNC_THROTTLE_MS) {
+      lastDragSyncTime.current = now;
+      
+      // Update position in Firestore (async, non-blocking)
+      updateShape(id, { x, y }).catch(err => {
+        // Silently fail - final position will sync on drag end
+        console.debug('[handleShapeDragMove] Position sync failed (will retry on drag end):', err);
+      });
+    }
+  }, [shapes, liveShapeProps, updateShape, updateCursor]);
 
   // Handle shape drag end (update position and unlock in ONE write - optimization!)
   const handleShapeDragEnd = async (id: string, x: number, y: number) => {
