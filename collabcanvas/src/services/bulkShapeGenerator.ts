@@ -26,7 +26,6 @@ export function generateBulkShapePositions(
   config: BulkShapeConfig,
   canvasDims: { width: number; height: number }
 ): ShapePosition[] {
-  const shapes: ShapePosition[] = [];
   const size = config.size || 50;
   
   console.log(`[BulkShapeGenerator] Generating ${config.count} ${config.shapeType} shapes in ${config.layout} layout`);
@@ -57,7 +56,7 @@ function generateGridLayout(
   count: number,
   shapeType: string,
   size: number,
-  canvasDims: { width: number; height: number }
+  _canvasDims: { width: number; height: number }
 ): ShapePosition[] {
   const shapes: ShapePosition[] = [];
   const cols = Math.ceil(Math.sqrt(count));

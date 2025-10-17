@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Download, X } from 'lucide-react';
 import styles from './ExportModal.module.css';
 

@@ -103,21 +103,6 @@ export default function ShapeStylePanel({
     '#000000', // Black
   ];
 
-  const getShapeTypeLabel = () => {
-    switch (selectedShape.type) {
-      case 'rectangle':
-        return 'Rectangle';
-      case 'circle':
-        return 'Circle';
-      case 'text':
-        return 'Text Box';
-      case 'line':
-        return 'Line';
-      default:
-        return 'Shape';
-    }
-  };
-
   const showFillColor = selectedShape.type === 'rectangle' || selectedShape.type === 'circle';
   const showStrokeColor = selectedShape.type === 'line';
   const showTextColor = selectedShape.type === 'text';

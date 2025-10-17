@@ -3,7 +3,6 @@
  * Confirms with user before creating 100+ shapes
  */
 
-import React from 'react';
 import './BulkConfirmationModal.module.css';
 
 interface BulkConfirmationModalProps {
